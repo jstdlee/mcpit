@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MCPfier · Connection settings</title><link rel="stylesheet" href="ui.css"></head>
+<body><main class="settings">
+  <header><div class="logo"><span class="mark">m</span><h1>MCPfier</h1></div><span class="badge">LOCAL PREVIEW · 0.1</span></header>
+  <div class="hero"><p class="eyebrow">Same prompt. More capabilities.</p><h2>Help your agent discover<br>what websites can do.</h2><p class="muted">Discover native tools, adapt selected capabilities, and keep working with your existing agent.</p></div>
+  <div class="settings-grid">
+    <section class="card"><div class="row spaced"><h2>Connect your local bridge</h2><span id="status" class="badge">Offline</span></div>
+      <form id="form"><label class="field"><span>Bridge URL</span><input id="url" type="url" required value="http://127.0.0.1:19321" spellcheck="false"></label>
+      <label class="field"><span>Pairing token</span><input id="token" type="password" required autocomplete="off" placeholder="Run npm run pair to get your token"></label>
+      <button class="primary" type="submit">Save and connect</button></form><p id="message" class="message" role="status"></p>
+      <p class="notice">Your capability index stays on this computer. This preview supports read-only tools and clearly labels compatibility mode.</p>
+    </section>
+    <section class="card"><h2>Connect in three steps</h2><ol class="steps">
+      <li><strong>Start the local bridge</strong>Run <code>npm start</code> in the project folder, then <code>npm run pair</code> to get your pairing token.</li>
+      <li><strong>Choose website capabilities</strong>Open MCPfier and enable a site. Native tools are discovered automatically; you select the capabilities to adapt.</li>
+      <li><strong>Connect your existing agent</strong>Add a local MCP server: <code>node /project/path/src/mcp.js</code>. Your agent searches the map, then discovers and calls tools on the page.</li>
+    </ol><a id="demo" href="http://127.0.0.1:19321/demo/legacy" target="_blank" rel="noreferrer">Open the adapter demo ↗</a></section>
+  </div>
+  <section class="card"><h2>Enabled sites</h2><div id="sites" class="muted">No sites enabled yet.</div></section>
+  <footer>The mcpfied map provides entry points and specifications. Calls always use tools available on the current page.</footer>
+</main><script type="module" src="options.js"></script></body></html>

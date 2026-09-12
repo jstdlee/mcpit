@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "MCPfier",
+  "description": "Discover website capabilities. Expose selected capabilities to your existing agent.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "scripting", "storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "MCPfier" },
+  "options_page": "options.html"
+}

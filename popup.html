@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>MCPfier</title><link rel="stylesheet" href="ui.css"></head>
+<body class="popup">
+  <header><div class="logo"><span class="mark">m</span><h1>MCPfier</h1></div><span id="connection" class="badge">Connecting</span></header>
+  <div class="intro"><p class="eyebrow">Website capabilities</p><p id="site" class="site muted">Reading current site…</p></div>
+  <div class="row"><button id="enable" class="primary full">Enable this site</button><button id="refresh" class="secondary" title="Discover tools again">Refresh</button></div>
+  <p id="message" class="message" role="status"></p>
+  <section class="card"><div class="row spaced"><h2>Available tools</h2><span id="runtime" class="badge">Not analyzed</span></div><div id="tools"><p class="empty">Enable this site to discover its available tools.</p></div></section>
+  <section class="card"><h2>Expose capabilities</h2><p class="empty">Choose capabilities to expose through an adapter.</p><div id="candidates"></div><button id="apply" class="primary full" disabled>Apply selection</button></section>
+  <footer><a href="options.html" target="_blank">Connection settings</a><button id="disable" class="secondary">Disable site</button></footer>
+  <script type="module" src="popup.js"></script>
+</body></html>
