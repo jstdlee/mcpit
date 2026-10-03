@@ -1,22 +1,11 @@
-# MCPfier Extension 0.1.0
+# mcpit
 
-Chrome extension prototype for MCPfier. It discovers website capabilities,
-exposes selected read-only adapters, and connects to a local MCPfier bridge.
+Make any website usable by an agent as an MCP server, with no change to the site.
 
-## Files
+- The first visit to a site is slow: mcpit explores it and saves a **sitepack** (forms, search and API endpoints; no user data).
+- Later visits use the sitepack and are fast.
+- A shared **registry** controls sitepack versions, validates submits and decides which version is best.
 
-- `manifest.json` - Chrome Manifest V3 extension manifest.
-- `background.js` - service worker for tab access, bridge connection, and tool calls.
-- `page-runtime.js` - page-side runtime for analysis, adapter registration, discovery, and calls.
-- `popup.html`, `popup.js` - extension popup for enabling sites and selecting capabilities.
-- `options.html`, `options.js` - bridge connection settings.
-- `ui.css`, `theme.css` - extension UI styles.
+Status: planning. See [PLAN.md](PLAN.md) (plan v3) and [docs/plan.html](docs/plan.html).
 
-## Local Install
-
-1. Open `chrome://extensions/`.
-2. Enable Developer mode.
-3. Choose Load unpacked.
-4. Select this folder: `mcpfier-extension-0.1.0`.
-
-The extension requires Chrome 116 or newer.
+The first Chrome extension prototype (MCPfier 0.1) is parked in [legacy/extension](legacy/extension).

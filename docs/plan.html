@@ -1,4 +1,4 @@
-<title>mcpit Plan v2</title>
+<title>mcpit Plan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
@@ -74,272 +74,242 @@ td.m{font-family:"JetBrains Mono",monospace;font-weight:600;color:var(--accent);
 .qs{display:flex;flex-direction:column;gap:8px;padding-left:1.2em;margin:0}
 footer{color:var(--muted);font-size:.9rem}
 </style>
+<style>
+.changes{display:flex;flex-direction:column;gap:6px;margin:0;padding-left:1.1em;color:var(--ink)}
+.step.dim{opacity:.25}
+.step{transition:opacity .25s}
+@media (prefers-reduced-motion:reduce){.step{transition:none}}
+.outcome{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.outcome .chip{font-size:.85rem}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.settings .panel h3{color:var(--accent)}
+.settings .panel p{color:var(--muted);font-size:.95rem}
+.formula{font-family:"JetBrains Mono",monospace;font-size:.85rem;background:var(--code);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre}
+</style>
 
 <div class="wrap">
 <header>
-  <span class="eyebrow">jstdlee/mcpit · plan v2 · 2026-10-03 · draft for sign-off</span>
+  <span class="eyebrow">jstdlee/mcpit · plan v3 · 2026-10-03 · draft for sign-off</span>
   <h1>mcpit: any website, as an MCP server</h1>
-  <p class="lede">The first visit to a site is slow: mcpit explores it and saves a <strong>sitepack</strong> of forms, search and API endpoints. Every later visit uses the sitepack and is fast. Shared sitepacks let other users skip the slow visit.</p>
+  <p class="lede">The first visit to a site is slow: mcpit explores it and saves a <strong>sitepack</strong>. Later visits are fast. The <strong>registry</strong> decides which shared sitepack version is good, so every user gets the best one.</p>
 </header>
 
+<section>
+  <span class="eyebrow">Changes from v2</span>
+  <ul class="changes">
+    <li>The Chrome extension is out of scope for now: users may not trust it, and it explores APIs and forms poorly. It moves to <code>legacy/extension/</code>.</li>
+    <li>The scope is the MCP server, the CLI and, most important, the registry.</li>
+    <li>Sites behind a login use <code>mcpit login</code>: a visible browser opens once, with an mcpit-only profile. Later runs use it headless, and cookies stay local.</li>
+    <li>The registry owns versions, validation, repeated submits, update decisions, the jev + screening gate and the service settings.</li>
+  </ul>
+</section>
+
 <section id="ladder">
-  <span class="eyebrow">Core idea</span>
-  <h2>The lookup ladder</h2>
+  <span class="eyebrow">Client</span>
+  <h2>Lookup ladder</h2>
   <p>For each call, mcpit takes the first rung that works. Select a case to see the path.</p>
   <div class="seg" role="group" aria-label="Case">
-    <button type="button" id="c-first" aria-pressed="true" data-case="first">First visit, no share</button>
+    <button type="button" id="c-first" aria-pressed="true" data-case="first">First visit</button>
     <button type="button" id="c-repeat" aria-pressed="false" data-case="repeat">Repeat visit</button>
-    <button type="button" id="c-shared" aria-pressed="false" data-case="shared">Someone shared it</button>
+    <button type="button" id="c-shared" aria-pressed="false" data-case="shared">In the registry</button>
     <button type="button" id="c-native" aria-pressed="false" data-case="native">Site is MCP-ready</button>
   </div>
   <div class="fig">
-    <svg viewBox="0 0 900 250" role="img" aria-label="Lookup ladder: native, local sitepack, registry sitepack, explore">
-      <defs>
-        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker>
-      </defs>
-      <g class="rung" data-r="call">
-        <rect x="10" y="95" width="120" height="60" rx="8" class="box-acc"/>
-        <text x="70" y="121" text-anchor="middle" font-weight="600">Agent call</text>
-        <text x="70" y="140" text-anchor="middle" class="t-muted" font-size="13">mcpit_call</text>
-      </g>
-      <g class="rung" data-r="native">
-        <rect x="170" y="20" width="160" height="70" rx="8" class="box"/>
-        <text x="250" y="48" text-anchor="middle" font-weight="600">1 · Native</text>
-        <text x="250" y="68" text-anchor="middle" class="t-muted" font-size="13">WebMCP, OpenAPI, OpenSearch</text>
-      </g>
-      <g class="rung" data-r="local">
-        <rect x="350" y="20" width="160" height="70" rx="8" class="box-ok"/>
-        <text x="430" y="48" text-anchor="middle" font-weight="600">2 · Local sitepack</text>
-        <text x="430" y="68" text-anchor="middle" class="t-muted" font-size="13">ms · no LLM</text>
-      </g>
-      <g class="rung" data-r="registry">
-        <rect x="530" y="20" width="160" height="70" rx="8" class="box-acc"/>
-        <text x="610" y="48" text-anchor="middle" font-weight="600">3 · Registry pack</text>
-        <text x="610" y="68" text-anchor="middle" class="t-muted" font-size="13">pull → scan → use</text>
-      </g>
-      <g class="rung" data-r="explore">
-        <rect x="710" y="20" width="170" height="70" rx="8" class="box-warm"/>
-        <text x="795" y="48" text-anchor="middle" font-weight="600">4 · Explore</text>
-        <text x="795" y="68" text-anchor="middle" class="t-muted" font-size="13">slow · seconds–minutes</text>
-      </g>
+    <svg viewBox="0 0 900 250" role="img" aria-label="Lookup ladder: native, local sitepack, registry, explore">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
+      <g class="rung" data-r="call"><rect x="10" y="95" width="120" height="60" rx="8" class="box-acc"/><text x="70" y="121" text-anchor="middle" font-weight="600">Agent call</text><text x="70" y="140" text-anchor="middle" class="t-muted" font-size="13">MCP or CLI</text></g>
+      <g class="rung" data-r="native"><rect x="170" y="20" width="160" height="70" rx="8" class="box"/><text x="250" y="48" text-anchor="middle" font-weight="600">1 · Native</text><text x="250" y="68" text-anchor="middle" class="t-muted" font-size="13">MCP, OpenAPI, OpenSearch</text></g>
+      <g class="rung" data-r="local"><rect x="350" y="20" width="160" height="70" rx="8" class="box-ok"/><text x="430" y="48" text-anchor="middle" font-weight="600">2 · Local sitepack</text><text x="430" y="68" text-anchor="middle" class="t-muted" font-size="13">ms · no LLM</text></g>
+      <g class="rung" data-r="registry"><rect x="530" y="20" width="160" height="70" rx="8" class="box-acc"/><text x="610" y="48" text-anchor="middle" font-weight="600">3 · Registry</text><text x="610" y="68" text-anchor="middle" class="t-muted" font-size="13">active, signed version</text></g>
+      <g class="rung" data-r="explore"><rect x="710" y="20" width="170" height="70" rx="8" class="box-warm"/><text x="795" y="48" text-anchor="middle" font-weight="600">4 · Explore</text><text x="795" y="68" text-anchor="middle" class="t-muted" font-size="13">slow · seconds–minutes</text></g>
       <path d="M130,115 C150,115 150,55 170,55" class="edge" marker-end="url(#ah)"/>
-      <path d="M330,55 L350,55" class="edge" marker-end="url(#ah)"/>
-      <path d="M510,55 L530,55" class="edge" marker-end="url(#ah)"/>
-      <path d="M690,55 L710,55" class="edge" marker-end="url(#ah)"/>
-      <text x="340" y="108" text-anchor="middle" class="t-muted" font-size="12">miss</text>
-      <text x="520" y="108" text-anchor="middle" class="t-muted" font-size="12">miss</text>
-      <text x="700" y="108" text-anchor="middle" class="t-muted" font-size="12">miss</text>
-      <g class="rung" data-r="save">
-        <rect x="530" y="170" width="350" height="60" rx="8" class="box"/>
-        <text x="705" y="196" text-anchor="middle" font-weight="600">Save sitepack locally</text>
-        <text x="705" y="215" text-anchor="middle" class="t-muted" font-size="13">offer publish (opt-in) · next call hits rung 2</text>
-        <path d="M795,90 L795,170" class="edge" marker-end="url(#ah)"/>
-        <path d="M530,200 C430,200 430,120 430,92" class="edge" marker-end="url(#ah)"/>
-      </g>
-      <g class="rung" data-r="result">
-        <rect x="170" y="170" width="200" height="60" rx="8" class="box-ok"/>
-        <text x="270" y="196" text-anchor="middle" font-weight="600">Result to agent</text>
-        <text x="270" y="215" text-anchor="middle" class="t-muted" font-size="13">content marked untrusted</text>
-      </g>
+      <path d="M330,55 L350,55" class="edge" marker-end="url(#ah)"/><path d="M510,55 L530,55" class="edge" marker-end="url(#ah)"/><path d="M690,55 L710,55" class="edge" marker-end="url(#ah)"/>
+      <text x="340" y="108" text-anchor="middle" class="t-muted" font-size="12">miss</text><text x="520" y="108" text-anchor="middle" class="t-muted" font-size="12">miss</text><text x="700" y="108" text-anchor="middle" class="t-muted" font-size="12">miss</text>
+      <g class="rung" data-r="save"><rect x="530" y="170" width="350" height="60" rx="8" class="box"/><text x="705" y="196" text-anchor="middle" font-weight="600">Save locally · offer submit</text><text x="705" y="215" text-anchor="middle" class="t-muted" font-size="13">next call hits rung 2</text>
+        <path d="M795,90 L795,170" class="edge" marker-end="url(#ah)"/><path d="M530,200 C430,200 430,120 430,92" class="edge" marker-end="url(#ah)"/></g>
+      <g class="rung" data-r="result"><rect x="170" y="170" width="200" height="60" rx="8" class="box-ok"/><text x="270" y="196" text-anchor="middle" font-weight="600">Result to agent</text><text x="270" y="215" text-anchor="middle" class="t-muted" font-size="13">content marked untrusted</text></g>
     </svg>
   </div>
   <p class="ladder-note" id="ladder-note" aria-live="polite"></p>
 </section>
 
 <section id="arch">
-  <span class="eyebrow">Targets 1–5</span>
-  <h2>Components</h2>
-  <p>One TypeScript monorepo. One core library; four front ends; one public registry.</p>
+  <span class="eyebrow">Components</span>
+  <h2>MCP server, CLI, registry</h2>
   <div class="fig">
-    <svg viewBox="0 0 900 330" role="img" aria-label="Architecture: agents and CLI talk to the MCP server, which uses core; core uses executors and the registry">
+    <svg viewBox="0 0 900 300" role="img" aria-label="Architecture: agents use MCP server and CLI on core; core talks to registry; screeners pull tasks from registry">
       <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
-      <rect x="10" y="20" width="180" height="56" rx="8" class="box"/><text x="100" y="44" text-anchor="middle" font-weight="600">Agents</text><text x="100" y="63" text-anchor="middle" class="t-muted" font-size="12">Claude Code, Codex, Cursor</text>
-      <rect x="10" y="100" width="180" height="56" rx="8" class="box"/><text x="100" y="124" text-anchor="middle" font-weight="600">mcpit CLI</text><text x="100" y="143" text-anchor="middle" class="t-muted" font-size="12">history · idle batch</text>
-      <rect x="10" y="180" width="180" height="56" rx="8" class="box"/><text x="100" y="204" text-anchor="middle" font-weight="600">Chrome extension</text><text x="100" y="223" text-anchor="middle" class="t-muted" font-size="12">logged-in browser</text>
+      <text x="200" y="18" text-anchor="middle" class="t-muted t-mono" font-size="11">USER MACHINE</text>
+      <rect x="10" y="30" width="170" height="52" rx="8" class="box"/><text x="95" y="61" text-anchor="middle" font-weight="600">Agents</text>
+      <rect x="210" y="30" width="170" height="52" rx="8" class="box-acc"/><text x="295" y="53" text-anchor="middle" font-weight="600">MCP server</text><text x="295" y="71" text-anchor="middle" class="t-muted" font-size="12">mcpit serve</text>
+      <rect x="10" y="100" width="170" height="52" rx="8" class="box-acc"/><text x="95" y="123" text-anchor="middle" font-weight="600">CLI</text><text x="95" y="141" text-anchor="middle" class="t-muted" font-size="12">explore · batch · submit</text>
+      <rect x="210" y="100" width="170" height="130" rx="8" class="box"/><text x="295" y="124" text-anchor="middle" font-weight="700">core</text>
+      <text x="295" y="148" text-anchor="middle" font-size="13">explorer · executors</text><text x="295" y="168" text-anchor="middle" font-size="13">decision engine</text><text x="295" y="188" text-anchor="middle" font-size="13">local store · redactor</text><text x="295" y="208" text-anchor="middle" font-size="13">HTTP · headless</text>
+      <path d="M180,56 L210,56" class="edge" marker-end="url(#ah2)"/><path d="M295,82 L295,100" class="edge" marker-end="url(#ah2)"/><path d="M180,126 L210,140" class="edge" marker-end="url(#ah2)"/>
 
-      <rect x="240" y="20" width="180" height="56" rx="8" class="box-acc"/><text x="330" y="44" text-anchor="middle" font-weight="600">MCP server</text><text x="330" y="63" text-anchor="middle" class="t-muted" font-size="12">stdio · streamable HTTP</text>
+      <text x="620" y="18" text-anchor="middle" class="t-muted t-mono" font-size="11">CLOUDFLARE</text>
+      <rect x="450" y="30" width="340" height="200" rx="10" class="box-warm"/>
+      <text x="620" y="54" text-anchor="middle" font-weight="700">Registry</text>
+      <rect x="466" y="66" width="150" height="40" rx="6" class="box"/><text x="541" y="91" text-anchor="middle" font-size="13">Submit API · intake</text>
+      <rect x="624" y="66" width="150" height="40" rx="6" class="box"/><text x="699" y="91" text-anchor="middle" font-size="13">Versions (D1 + R2)</text>
+      <rect x="466" y="114" width="150" height="40" rx="6" class="box"/><text x="541" y="139" text-anchor="middle" font-size="13">Static scan · diff</text>
+      <rect x="624" y="114" width="150" height="40" rx="6" class="box"/><text x="699" y="139" text-anchor="middle" font-size="13">Screening queue</text>
+      <rect x="466" y="162" width="150" height="52" rx="6" class="box"/><text x="541" y="185" text-anchor="middle" font-size="13">Console</text><text x="541" y="202" text-anchor="middle" class="t-muted" font-size="11">settings · dashboard</text>
+      <rect x="624" y="162" width="150" height="52" rx="6" class="box"/><text x="699" y="185" text-anchor="middle" font-size="13">Signer · audit log</text><text x="699" y="202" text-anchor="middle" class="t-muted" font-size="11">immutable versions</text>
+      <path d="M380,150 L450,110" class="edge" marker-end="url(#ah2)"/><text x="415" y="120" text-anchor="middle" class="t-muted" font-size="11">pull/submit</text>
 
-      <rect x="240" y="100" width="400" height="136" rx="10" class="box-acc"/>
-      <text x="440" y="122" text-anchor="middle" font-weight="700">packages/core</text>
-      <rect x="256" y="134" width="118" height="40" rx="6" class="box"/><text x="315" y="159" text-anchor="middle" font-size="13">Explorer</text>
-      <rect x="381" y="134" width="118" height="40" rx="6" class="box"/><text x="440" y="159" text-anchor="middle" font-size="13">Decision engine</text>
-      <rect x="506" y="134" width="118" height="40" rx="6" class="box"/><text x="565" y="159" text-anchor="middle" font-size="13">Executor</text>
-      <rect x="256" y="182" width="118" height="40" rx="6" class="box"/><text x="315" y="207" text-anchor="middle" font-size="13">Sitepack store</text>
-      <rect x="381" y="182" width="118" height="40" rx="6" class="box"/><text x="440" y="207" text-anchor="middle" font-size="13">Redactor</text>
-      <rect x="506" y="182" width="118" height="40" rx="6" class="box"/><text x="565" y="207" text-anchor="middle" font-size="13">Scanner</text>
-
-      <rect x="690" y="100" width="200" height="40" rx="6" class="box"/><text x="790" y="125" text-anchor="middle" font-size="13">HTTP executor</text>
-      <rect x="690" y="148" width="200" height="40" rx="6" class="box"/><text x="790" y="173" text-anchor="middle" font-size="13">Headless (Playwright)</text>
-      <rect x="690" y="196" width="200" height="40" rx="6" class="box"/><text x="790" y="221" text-anchor="middle" font-size="13">Extension executor</text>
-
-      <rect x="240" y="262" width="400" height="56" rx="8" class="box-warm"/><text x="440" y="286" text-anchor="middle" font-weight="600">Public registry · Cloudflare Worker + D1 + R2</text><text x="440" y="305" text-anchor="middle" class="t-muted" font-size="12">signed sitepacks · scan · votes · dashboard</text>
-      <rect x="690" y="262" width="200" height="56" rx="8" class="box"/><text x="790" y="286" text-anchor="middle" font-weight="600">Dashboard</text><text x="790" y="305" text-anchor="middle" class="t-muted" font-size="12">rank by use, trust, trend</text>
-
-      <path d="M190,48 L240,48" class="edge" marker-end="url(#ah2)"/>
-      <path d="M190,128 L240,150" class="edge" marker-end="url(#ah2)"/>
-      <path d="M190,208 L240,200" class="edge" marker-end="url(#ah2)"/>
-      <path d="M330,76 L330,100" class="edge" marker-end="url(#ah2)"/>
-      <path d="M640,168 L690,120" class="edge" marker-end="url(#ah2)"/>
-      <path d="M640,168 L690,168" class="edge" marker-end="url(#ah2)"/>
-      <path d="M640,168 L690,216" class="edge" marker-end="url(#ah2)"/>
-      <path d="M440,236 L440,262" class="edge" marker-end="url(#ah2)"/>
-      <path d="M640,290 L690,290" class="edge" marker-end="url(#ah2)"/>
+      <text x="620" y="252" text-anchor="middle" class="t-muted t-mono" font-size="11">ANYWHERE (OPERATOR, SPONSOR)</text>
+      <rect x="450" y="260" width="340" height="34" rx="8" class="box-acc"/><text x="620" y="282" text-anchor="middle" font-weight="600" font-size="14">Screener · jev + BYOK LLM + replay</text>
+      <path d="M699,154 C830,170 830,270 790,277" class="edge" marker-end="url(#ah2)"/><text x="852" y="215" text-anchor="middle" class="t-muted" font-size="11">tasks ⇄ results</text>
     </svg>
   </div>
+</section>
+
+<section id="pipeline">
+  <span class="eyebrow">Registry · the core</span>
+  <h2>Submit pipeline and gate</h2>
+  <p>Steps 1–6 run at submit time and are cheap. Screening runs in the background on a screener. Select a submit to see its path and result.</p>
+  <div class="seg" role="group" aria-label="Submit scenario">
+    <button type="button" id="s-dup" aria-pressed="false" data-s="dup">Same user resubmits</button>
+    <button type="button" id="s-confirm" aria-pressed="false" data-s="confirm">Other user, same pack</button>
+    <button type="button" id="s-fix" aria-pressed="true" data-s="fix">Fix for a broken tool</button>
+    <button type="button" id="s-reg" aria-pressed="false" data-s="reg">Regression</button>
+    <button type="button" id="s-risky" aria-pressed="false" data-s="risky">Adds a write tool</button>
+    <button type="button" id="s-poison" aria-pressed="false" data-s="poison">Sends data to another domain</button>
+  </div>
+  <div class="fig">
+    <svg viewBox="0 0 900 230" role="img" aria-label="Submit pipeline: intake, canonicalize, duplicate check, static scan, diff, queue, screening (replay, jev, LLM), decision">
+      <defs><marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
+      <text x="300" y="16" text-anchor="middle" class="t-muted t-mono" font-size="11">SYNC · AT SUBMIT</text>
+      <text x="745" y="16" text-anchor="middle" class="t-muted t-mono" font-size="11">ASYNC · SCREENER</text>
+      <g font-size="13">
+        <g class="step" data-k="intake"><rect x="10" y="28" width="90" height="56" rx="7" class="box"/><text x="55" y="52" text-anchor="middle">1 intake</text><text x="55" y="70" text-anchor="middle" class="t-muted" font-size="11">auth · limits</text></g>
+        <g class="step" data-k="canon"><rect x="110" y="28" width="90" height="56" rx="7" class="box"/><text x="155" y="52" text-anchor="middle">2 canonical</text><text x="155" y="70" text-anchor="middle" class="t-muted" font-size="11">sha256</text></g>
+        <g class="step" data-k="dup"><rect x="210" y="28" width="90" height="56" rx="7" class="box-acc"/><text x="255" y="52" text-anchor="middle">3 duplicate</text><text x="255" y="70" text-anchor="middle" class="t-muted" font-size="11">hash · near-dup</text></g>
+        <g class="step" data-k="scan"><rect x="310" y="28" width="90" height="56" rx="7" class="box"/><text x="355" y="52" text-anchor="middle">4 scan</text><text x="355" y="70" text-anchor="middle" class="t-muted" font-size="11">origin · secrets</text></g>
+        <g class="step" data-k="diff"><rect x="410" y="28" width="90" height="56" rx="7" class="box"/><text x="455" y="52" text-anchor="middle">5 diff</text><text x="455" y="70" text-anchor="middle" class="t-muted" font-size="11">per tool</text></g>
+        <g class="step" data-k="queue"><rect x="510" y="28" width="90" height="56" rx="7" class="box"/><text x="555" y="52" text-anchor="middle">6 queue</text><text x="555" y="70" text-anchor="middle" class="t-muted" font-size="11">validated</text></g>
+        <g class="step" data-k="screen"><rect x="620" y="28" width="250" height="56" rx="7" class="box-acc"/><text x="745" y="50" text-anchor="middle" font-weight="600">7 screening</text><text x="745" y="70" text-anchor="middle" class="t-muted" font-size="11">replay probes → jev questions → LLM judge if unsure</text></g>
+      </g>
+      <g class="edge"><path d="M100,56 L110,56" marker-end="url(#ah4)"/><path d="M200,56 L210,56" marker-end="url(#ah4)"/><path d="M300,56 L310,56" marker-end="url(#ah4)"/><path d="M400,56 L410,56" marker-end="url(#ah4)"/><path d="M500,56 L510,56" marker-end="url(#ah4)"/><path d="M600,56 L620,56" marker-end="url(#ah4)"/></g>
+      <g font-size="13">
+        <g class="step" data-k="o-idem"><rect x="140" y="140" width="130" height="50" rx="7" class="box"/><text x="205" y="161" text-anchor="middle">idempotent</text><text x="205" y="178" text-anchor="middle" class="t-muted" font-size="11">same ID returned</text><path d="M255,84 L215,140" class="edge" marker-end="url(#ah4)"/></g>
+        <g class="step" data-k="o-conf"><rect x="10" y="140" width="120" height="50" rx="7" class="box-ok"/><text x="70" y="161" text-anchor="middle">confirmation</text><text x="70" y="178" text-anchor="middle" class="t-muted" font-size="11">+1 agreement</text><path d="M240,84 L90,140" class="edge" marker-end="url(#ah4)"/></g>
+        <g class="step" data-k="o-rej"><rect x="300" y="140" width="120" height="50" rx="7" class="box-bad"/><text x="360" y="161" text-anchor="middle">rejected</text><text x="360" y="178" text-anchor="middle" class="t-muted" font-size="11">reason logged</text><path d="M355,84 L360,140" class="edge" marker-end="url(#ah4)"/></g>
+        <g class="step" data-k="o-promote"><rect x="560" y="140" width="130" height="50" rx="7" class="box-ok"/><text x="625" y="161" text-anchor="middle">promote tool</text><text x="625" y="178" text-anchor="middle" class="t-muted" font-size="11">new active version</text><path d="M700,84 L630,140" class="edge" marker-end="url(#ah4)"/></g>
+        <g class="step" data-k="o-quar"><rect x="700" y="140" width="110" height="50" rx="7" class="box-warm"/><text x="755" y="161" text-anchor="middle">quarantine</text><text x="755" y="178" text-anchor="middle" class="t-muted" font-size="11">moderator</text><path d="M755,84 L755,140" class="edge" marker-end="url(#ah4)"/></g>
+        <g class="step" data-k="o-rej2"><rect x="440" y="140" width="110" height="50" rx="7" class="box-bad"/><text x="495" y="161" text-anchor="middle">rejected</text><text x="495" y="178" text-anchor="middle" class="t-muted" font-size="11">regression</text><path d="M660,84 L505,140" class="edge" marker-end="url(#ah4)"/></g>
+      </g>
+      <text x="450" y="218" text-anchor="middle" class="t-muted" font-size="12">jev ranks and flags; it never approves a write, payment or new-domain change alone</text>
+    </svg>
+  </div>
+  <div class="outcome" aria-live="polite"><span class="chip" id="out-chip"></span><span id="out-text"></span></div>
+</section>
+
+<section id="improve">
+  <span class="eyebrow">Registry</span>
+  <h2>Is the new submit a real improvement?</h2>
+  <p>The screener classifies each changed tool. Promotion is per tool: a fix to one tool never replaces the other tools.</p>
   <div class="tw"><table>
-    <thead><tr><th>MCP tool</th><th>Use</th></tr></thead>
+    <thead><tr><th>Class</th><th>Signal</th><th>Decision</th></tr></thead>
     <tbody>
-      <tr><td class="m">mcpit_find</td><td>Find site tools by URL, domain or task text.</td></tr>
-      <tr><td class="m">mcpit_tools</td><td>List the tools of one site, loaded on demand to keep the agent context small.</td></tr>
-      <tr><td class="m">mcpit_call</td><td>Call one site tool. Write tools ask the user first (MCP elicitation).</td></tr>
-      <tr><td class="m">mcpit_explore</td><td>Explore a URL now (slow path). Streams progress.</td></tr>
-      <tr><td class="m">mcpit_read</td><td>Read main text or tables while exploration runs.</td></tr>
-      <tr><td class="m">mcpit_report</td><td>Report a broken or wrong tool.</td></tr>
-      <tr><td class="m">mcpit_publish</td><td>Publish a local sitepack. Shows a diff; the user approves.</td></tr>
+      <tr><td>Confirmation</td><td>Same as active</td><td><span class="chip ok">+1 agreement</span></td></tr>
+      <tr><td>Correction</td><td>Active probe fails or has failure reports; candidate passes</td><td><span class="chip ok">promote tool</span></td></tr>
+      <tr><td>Drift update</td><td>Site fingerprint changed; candidate matches the new site</td><td><span class="chip ok">promote tool</span></td></tr>
+      <tr><td>Extension</td><td>New read tools; existing tools unchanged and pass</td><td><span class="chip ok">promote new tools</span></td></tr>
+      <tr><td>Cosmetic</td><td>Only description or names differ</td><td><span class="chip">promote if jev/LLM say it fits better</span></td></tr>
+      <tr><td>Alternative</td><td>Both pass; other endpoint or flow</td><td><span class="chip">keep; agreement and success decide</span></td></tr>
+      <tr><td>Regression</td><td>Removes passing tools, a probe fails, worse output</td><td><span class="chip bad">reject</span></td></tr>
+      <tr><td>Risky</td><td>Wider effect, new domain, new auth, new write tool</td><td><span class="chip warm">quarantine</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="formula">score = 0.35·replay_pass + 0.20·agreement + 0.15·field_success_rate
+      + 0.10·jev_score + 0.10·llm_score + 0.10·submitter_reputation</div>
+</section>
+
+<section id="repeat">
+  <span class="eyebrow">Registry</span>
+  <h2>Repeated submits</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Case</th><th>Detection</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>Same submitter, same content</td><td>Same hash, same account</td><td>Return the existing ID. No new version, no count.</td></tr>
+      <tr><td>Other submitter, same content</td><td>Same hash, unlinked account</td><td>+1 independent agreement. Trust goes up.</td></tr>
+      <tr><td>Near-duplicate</td><td>Only volatile or cosmetic fields differ</td><td>Confirmation; cosmetic part goes to description review.</td></tr>
+      <tr><td>Rejected content again</td><td>Hash in the rejected set</td><td>Auto-reject with the old reason, unless the site changed.</td></tr>
+      <tr><td>Flood</td><td>Many submits per account or site</td><td>Rate limit, then lower reputation.</td></tr>
+      <tr><td>Linked accounts</td><td>Same device key, IP range or timing</td><td>Count as one voice.</td></tr>
     </tbody>
   </table></div>
 </section>
 
-<section id="explore">
-  <span class="eyebrow">Targets 7, 11, 12</span>
-  <h2>Exploration and the decision engine</h2>
-  <p>Exploration makes many small decisions. The engine asks the cheapest source first and stops when confidence is high enough. jev is optional.</p>
+<section id="states">
+  <span class="eyebrow">Registry</span>
+  <h2>Version life cycle</h2>
   <div class="fig">
-    <svg viewBox="0 0 900 290" role="img" aria-label="Exploration pipeline with decision engine rules, jev, LLM">
-      <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
+    <svg viewBox="0 0 900 200" role="img" aria-label="Version states: submitted, validated, screening, candidate, active, superseded, expired, delisted, rejected, quarantined">
+      <defs><marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
       <g font-size="13">
-        <rect x="10" y="20" width="100" height="50" rx="7" class="box"/><text x="60" y="50" text-anchor="middle">discover</text>
-        <rect x="130" y="20" width="100" height="50" rx="7" class="box"/><text x="180" y="50" text-anchor="middle">collect</text>
-        <rect x="250" y="20" width="100" height="50" rx="7" class="box"/><text x="300" y="50" text-anchor="middle">infer params</text>
-        <rect x="370" y="20" width="100" height="50" rx="7" class="box-acc"/><text x="420" y="50" text-anchor="middle">classify</text>
-        <rect x="490" y="20" width="100" height="50" rx="7" class="box-warm"/><text x="540" y="50" text-anchor="middle">safe probe</text>
-        <rect x="610" y="20" width="100" height="50" rx="7" class="box-acc"/><text x="660" y="50" text-anchor="middle">name</text>
-        <rect x="730" y="20" width="70" height="50" rx="7" class="box"/><text x="765" y="50" text-anchor="middle">verify</text>
-        <rect x="815" y="20" width="75" height="50" rx="7" class="box-ok"/><text x="852" y="50" text-anchor="middle">save</text>
+        <rect x="10" y="30" width="100" height="40" rx="20" class="box"/><text x="60" y="55" text-anchor="middle">submitted</text>
+        <rect x="135" y="30" width="100" height="40" rx="20" class="box"/><text x="185" y="55" text-anchor="middle">validated</text>
+        <rect x="260" y="30" width="100" height="40" rx="20" class="box-acc"/><text x="310" y="55" text-anchor="middle">screening</text>
+        <rect x="385" y="30" width="100" height="40" rx="20" class="box"/><text x="435" y="55" text-anchor="middle">candidate</text>
+        <rect x="510" y="30" width="100" height="40" rx="20" class="box-ok"/><text x="560" y="55" text-anchor="middle">active</text>
+        <rect x="660" y="10" width="110" height="36" rx="18" class="box"/><text x="715" y="33" text-anchor="middle">superseded</text>
+        <rect x="660" y="56" width="110" height="36" rx="18" class="box-warm"/><text x="715" y="79" text-anchor="middle">expired</text>
+        <rect x="790" y="34" width="100" height="36" rx="18" class="box-bad"/><text x="840" y="57" text-anchor="middle">delisted</text>
+        <rect x="135" y="130" width="100" height="40" rx="20" class="box-bad"/><text x="185" y="155" text-anchor="middle">rejected</text>
+        <rect x="260" y="130" width="110" height="40" rx="20" class="box-warm"/><text x="315" y="155" text-anchor="middle">quarantined</text>
       </g>
       <g class="edge">
-        <path d="M110,45 L130,45" marker-end="url(#ah3)"/><path d="M230,45 L250,45" marker-end="url(#ah3)"/><path d="M350,45 L370,45" marker-end="url(#ah3)"/><path d="M470,45 L490,45" marker-end="url(#ah3)"/><path d="M590,45 L610,45" marker-end="url(#ah3)"/><path d="M710,45 L730,45" marker-end="url(#ah3)"/><path d="M800,45 L815,45" marker-end="url(#ah3)"/>
+        <path d="M110,50 L135,50" marker-end="url(#ah5)"/><path d="M235,50 L260,50" marker-end="url(#ah5)"/><path d="M360,50 L385,50" marker-end="url(#ah5)"/><path d="M485,50 L510,50" marker-end="url(#ah5)"/>
+        <path d="M610,44 L660,30" marker-end="url(#ah5)"/><path d="M610,56 L660,72" marker-end="url(#ah5)"/>
+        <path d="M770,28 L790,44" marker-end="url(#ah5)"/>
+        <path d="M60,70 L160,130" marker-end="url(#ah5)"/><path d="M300,70 L220,130" marker-end="url(#ah5)"/><path d="M315,70 L315,130" marker-end="url(#ah5)"/>
+        <path d="M370,150 C470,150 540,120 555,72" marker-end="url(#ah5)"/>
+        <path d="M660,82 C630,110 590,100 575,72" marker-end="url(#ah5)"/>
       </g>
-      <text x="60" y="88" text-anchor="middle" class="t-muted" font-size="11">OpenAPI, llms.txt…</text>
-      <text x="180" y="88" text-anchor="middle" class="t-muted" font-size="11">forms, XHR, GraphQL</text>
-      <text x="300" y="88" text-anchor="middle" class="t-muted" font-size="11">types, enums, paging</text>
-      <text x="540" y="88" text-anchor="middle" class="t-muted" font-size="11">GET only</text>
-      <path d="M420,70 C420,120 300,120 300,140" class="edge" marker-end="url(#ah3)" stroke-dasharray="4 4"/>
-      <path d="M660,70 C660,120 600,120 600,140" class="edge" marker-end="url(#ah3)" stroke-dasharray="4 4"/>
-      <text x="450" y="128" class="t-muted" font-size="12" text-anchor="middle">questions</text>
-
-      <rect x="150" y="140" width="600" height="135" rx="10" class="box"/>
-      <text x="450" y="162" text-anchor="middle" font-weight="700">Decision engine (stop at enough confidence)</text>
-      <rect x="170" y="176" width="170" height="84" rx="8" class="box-ok"/>
-      <text x="255" y="200" text-anchor="middle" font-weight="600">1 · Rules</text>
-      <text x="255" y="220" text-anchor="middle" class="t-muted" font-size="12">µs · type=search, name=q,</text>
-      <text x="255" y="236" text-anchor="middle" class="t-muted" font-size="12">password, payment words</text>
-      <rect x="365" y="176" width="170" height="84" rx="8" class="box-acc"/>
-      <text x="450" y="200" text-anchor="middle" font-weight="600">2 · jev (optional)</text>
-      <text x="450" y="220" text-anchor="middle" class="t-muted" font-size="12">ms · statement pairs,</text>
-      <text x="450" y="236" text-anchor="middle" class="t-muted" font-size="12">rank and tie-break</text>
-      <rect x="560" y="176" width="170" height="84" rx="8" class="box-warm"/>
-      <text x="645" y="200" text-anchor="middle" font-weight="600">3 · LLM</text>
-      <text x="645" y="220" text-anchor="middle" class="t-muted" font-size="12">s · names, descriptions,</text>
-      <text x="645" y="236" text-anchor="middle" class="t-muted" font-size="12">flows, task → params</text>
-      <path d="M340,218 L365,218" class="edge" marker-end="url(#ah3)"/>
-      <path d="M535,218 L560,218" class="edge" marker-end="url(#ah3)"/>
+      <text x="480" y="140" class="t-muted" font-size="11">moderator approves</text>
+      <text x="610" y="112" class="t-muted" font-size="11">re-verified</text>
+      <text x="715" y="112" text-anchor="middle" class="t-muted" font-size="11">after N expire days</text>
     </svg>
   </div>
-  <div class="grid2">
-    <div class="panel">
-      <h3>How mcpit uses jev</h3>
-      <ul>
-        <li>Self-contained statement pairs: "A form with fields [q, category] <em>is / is not</em> a site search".</li>
-        <li>Score each option on its own (independent mode). Native multi-choice is biased by option order.</li>
-        <li>jev tends to say "true". It ranks and breaks ties. It never gives a final "safe" verdict alone.</li>
-        <li>Every decision is stored and shown ("how jev helped"), and measured against the LLM.</li>
-        <li>No jev installed: the engine goes from rules straight to the LLM.</li>
-      </ul>
-    </div>
-    <div class="panel">
-      <h3>CLI in idle time (target 11)</h3>
-      <ul>
-        <li><code>mcpit history import</code> reads origins and visit counts only.</li>
-        <li>It drops banking, health, mail, intranet and private IPs by default.</li>
-        <li>The user reviews the queue before the first batch.</li>
-        <li><code>mcpit batch --idle --budget 2h</code> runs one site at a time, inside a token and memory budget, and stops when the user comes back.</li>
-      </ul>
-    </div>
+</section>
+
+<section id="settings">
+  <span class="eyebrow">Registry · service management</span>
+  <h2>Registry settings console</h2>
+  <p>Roles: admin, moderator, site owner, contributor, screener. Every action goes to the audit log.</p>
+  <div class="settings">
+    <div class="panel"><h3>Sources</h3><p>Sites and their pack sources: community, owner-claimed, native, crawler. Trust per source. Domain allow and deny lists.</p></div>
+    <div class="panel"><h3>Mark good / bad</h3><p>Verified badge, or blocked so clients refuse it. A moderator verdict overrides the score.</p></div>
+    <div class="panel"><h3>Expire days</h3><p>Global default (proposed 30) and per-site override. The screener re-verifies before expiry; clients warn after.</p></div>
+    <div class="panel"><h3>Sort and rank</h3><p>By use (calls, unique clients), stars, trust, trend, newest. One star per account per site.</p></div>
+    <div class="panel"><h3>De-list / re-list</h3><p>Hide a site or version from search and pulls, with a reason: takedown, owner opt-out, abuse, legal.</p></div>
+    <div class="panel"><h3>Owner claim</h3><p>DNS TXT or <code>/.well-known/mcpit.json</code>. Owner packs rank first; owners can opt out.</p></div>
+    <div class="panel"><h3>Screening</h3><p>Screener tokens, jev endpoint, BYOK LLM key and model, daily budget, required agreement, auto-promote limits per class.</p></div>
+    <div class="panel"><h3>Submitters</h3><p>Reputation, rate limits, bans, linked-account rules.</p></div>
+    <div class="panel"><h3>Quarantine queue</h3><p>Diff view, replay results, jev and LLM reasons. Approve or reject.</p></div>
   </div>
 </section>
 
-<section id="privacy">
-  <span class="eyebrow">Targets 4, 6, 8</span>
-  <h2>Share structure, never data</h2>
+<section id="screener">
+  <span class="eyebrow">Costless gate</span>
+  <h2>Who pays for screening?</h2>
   <div class="grid2">
-    <div class="panel" style="border-color:var(--ok)">
-      <h3 style="color:var(--ok)">In a sitepack</h3>
-      <ul>
-        <li>Endpoint URL templates and methods</li>
-        <li>Parameter names, types, enums, defaults</li>
-        <li>Selectors and multi-step flows</li>
-        <li>Output shape (JSON paths)</li>
-        <li>Effect class: read · write · payment · destructive</li>
-        <li>Anonymous counters (site, tool, ok/fail)</li>
-      </ul>
-    </div>
-    <div class="panel" style="border-color:var(--bad)">
-      <h3 style="color:var(--bad)">Never leaves the machine</h3>
-      <ul>
-        <li>Cookies, auth headers, tokens, keys</li>
-        <li>Values the user typed; response bodies</li>
-        <li>IDs and emails in paths (<code>/user/1234</code> → <code>/user/{id}</code>)</li>
-        <li>Full URLs with query values; history</li>
-        <li>Anything from localhost, private IPs, intranet</li>
-      </ul>
-    </div>
-  </div>
-  <div class="tw"><table>
-    <thead><tr><th>Scan check</th><th>What it catches</th><th>Where</th></tr></thead>
-    <tbody>
-      <tr><td>Origin rule</td><td>Requests to a domain other than the site: data exfiltration.</td><td><span class="chip">publish + pull</span></td></tr>
-      <tr><td>Effect check</td><td>A "read" tool that POSTs or deletes; payment words force a higher class.</td><td><span class="chip">publish + pull</span></td></tr>
-      <tr><td>Prompt-injection scan</td><td>Instructions hidden in names or descriptions.</td><td><span class="chip">publish + pull</span></td></tr>
-      <tr><td>Secret scan</td><td>Tokens, keys, emails, phone numbers left in the pack.</td><td><span class="chip">publish + pull</span></td></tr>
-      <tr><td>Fact check (replay)</td><td>Registry crawler re-runs read tools; output and description must match.</td><td><span class="chip warm">registry</span></td></tr>
-      <tr><td>Agreement</td><td>Independent contributors who agree raise the trust score.</td><td><span class="chip warm">registry</span></td></tr>
-      <tr><td>Diff quarantine</td><td>A new version that adds write tools or new domains waits for review.</td><td><span class="chip warm">registry</span></td></tr>
-    </tbody>
-  </table></div>
-</section>
-
-<section id="edges">
-  <span class="eyebrow">Target 13</span>
-  <h2>Edge cases beyond security and validation</h2>
-  <div class="edge-list">
-    <div class="panel"><h3>Site behavior</h3><ul>
-      <li>Site changes: fingerprint per pack, re-explore only the broken tool, cut off tools with low success rate.</li>
-      <li>Dynamic tokens (CSRF, nonce, JS-signed params): token step, or browser-only executor.</li>
-      <li>Multi-step flows, pagination, cursors, infinite scroll.</li>
-      <li>SPA routes, GraphQL persisted queries, WebSocket, SSE, gRPC-web.</li>
-      <li>Iframes, shadow DOM, cross-origin widgets.</li>
-      <li>Locale, region, A/B and mobile variants.</li>
-      <li>Rate limits: back off, honor Retry-After, no IP rotation.</li>
-      <li>CAPTCHA and bot checks: stop and hand to the user. Never bypass.</li>
+    <div class="panel"><h3>Demo</h3><ul>
+      <li>The screener runs on the GB10: <code>mcpit screener run</code>.</li>
+      <li>jev = Julia <code>/v1/systemone</code> on :8011.</li>
+      <li>LLM = BYOK: any OpenAI-compatible endpoint, or a Claude API key.</li>
+      <li>It pulls tasks, so the registry needs no GPU and no paid model.</li>
     </ul></div>
-    <div class="panel"><h3>Actions and agents</h3><ul>
-      <li>Write, payment, destructive tools: never probed; always confirmed; dry-run if the site has one.</li>
-      <li>Show filled parameters before any write call.</li>
-      <li>Page text is untrusted: may hold prompt injection.</li>
-      <li>Too many tools: on-demand loading and search.</li>
-      <li>Slow first visit: stream progress; use <code>mcpit_read</code> meanwhile.</li>
-      <li>Cost: token budget per site and per day.</li>
-      <li>One action per tab; limit parallel explores; obey the 80 % memory cap.</li>
-    </ul></div>
-    <div class="panel"><h3>Registry and community</h3><ul>
-      <li>Fake popularity: account-weighted votes, capped counters.</li>
-      <li>Site owners: claim by DNS TXT or <code>/.well-known/mcpit.json</code>; owner pack wins; opt-out.</li>
-      <li>robots.txt, polite crawler, takedown process for ToS issues.</li>
-      <li>Registry outage: local cache; registry is never on the hot path.</li>
-      <li>Schema versions and migrations.</li>
-      <li>Delete my data: one command locally; account wipe in the registry.</li>
-      <li>Shared machines: store per OS user; no incognito.</li>
+    <div class="panel"><h3>Later</h3><ul>
+      <li>Sponsors and volunteers run screeners with free models.</li>
+      <li>Several screeners per task; the registry needs them to agree.</li>
+      <li>Signed results, screener reputation, random re-checks.</li>
+      <li>Replay is polite: low rate, robots.txt, read probes only.</li>
     </ul></div>
   </div>
 </section>
@@ -350,14 +320,14 @@ footer{color:var(--muted);font-size:.9rem}
   <div class="tw"><table>
     <thead><tr><th>M</th><th>Scope</th><th>Done when</th></tr></thead>
     <tbody>
-      <tr><td class="m">M0</td><td>Monorepo, sitepack schema v1, port prototype, rename MCPfier → mcpit</td><td>CI builds and lints all packages</td></tr>
-      <tr><td class="m">M1</td><td>Native detection, static explore, HTTP executor, local store, MCP server</td><td>10 public sites; repeat call ≥ 10× faster than first</td></tr>
-      <tr><td class="m">M2</td><td>Headless + extension explorers, network capture, logged-in sites</td><td>5 login sites work; secret-leak test passes</td></tr>
-      <tr><td class="m">M3</td><td>Decision engine rules → jev → LLM, decision log, benchmark</td><td>Report on accuracy and time saved with jev</td></tr>
-      <tr><td class="m">M4</td><td>CLI history import, idle batch</td><td>50 sites in idle time within budget</td></tr>
-      <tr><td class="m">M5</td><td>Registry: publish, pull, sign, scan, quarantine, owner claim</td><td>Pull-then-call on a clean machine, no exploration</td></tr>
-      <tr><td class="m">M6</td><td>Dashboard, public launch (npm, Chrome Web Store, docs)</td><td>Public URL live; ranks from real counters</td></tr>
-      <tr><td class="m">M7</td><td>Fact-check crawler, drift self-heal, fuzz and red-team tests</td><td>Red-team set passes</td></tr>
+      <tr><td class="m">M0</td><td>Monorepo, sitepack schema v1, park extension in <code>legacy/</code></td><td>CI builds and lints all packages</td></tr>
+      <tr><td class="m">M1</td><td>Core + CLI + MCP server: native detection, explore, HTTP/headless executors, local store</td><td>10 public sites; repeat ≥ 10× faster; works from Claude Code</td></tr>
+      <tr><td class="m">M2</td><td>Registry core: submit, hash, duplicate rules, static scan, tool diff, states, signed pull</td><td>Repeated-submit tests pass; pull-then-call on a clean machine</td></tr>
+      <tr><td class="m">M3</td><td>Screener: queue, replay, jev questions, BYOK LLM judge, classes, per-tool promotion</td><td>Test set of fixes, drifts, regressions, poisoned packs classified right</td></tr>
+      <tr><td class="m">M4</td><td>Console: settings, quarantine, audit + public dashboard</td><td>Moderator runs the full flow; ranks from real counters</td></tr>
+      <tr><td class="m">M5</td><td>Client decision engine with jev; <code>mcpit login</code>; history import; idle batch</td><td>Benchmark of time saved with jev; 50 sites in idle time</td></tr>
+      <tr><td class="m">M6</td><td>Public launch: npm, registry URL, docs</td><td>Public URL live</td></tr>
+      <tr><td class="m">M7</td><td>Multi-screener agreement, fuzz and red-team tests</td><td>Red-team set passes</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -368,8 +338,9 @@ footer{color:var(--muted);font-size:.9rem}
   <ol class="qs">
     <li>License: MIT or Apache-2.0?</li>
     <li>Registry domain: your own domain, or <code>workers.dev</code> first?</li>
-    <li>Publish login: GitHub only, or device keys without an account too?</li>
-    <li>Headless (Playwright) executor in M1, or only HTTP + extension?</li>
+    <li>Submit login: GitHub only, or also device keys without an account?</li>
+    <li>Default expire days: 30?</li>
+    <li>First moderators: only you?</li>
   </ol>
 </section>
 
@@ -379,21 +350,41 @@ footer{color:var(--muted);font-size:.9rem}
 <script>
 (() => {
   const cases = {
-    first:  { on: ['call','native','local','registry','explore','save','result'], note: 'First visit, nothing shared: every rung misses, so mcpit explores (slow). It saves the sitepack, and the call returns. The next call is fast.' },
-    repeat: { on: ['call','native','local','result'], note: 'Repeat visit: the local sitepack hits on rung 2. No LLM, no page analysis. The call only fills parameters and sends the request.' },
-    shared: { on: ['call','native','local','registry','result'], note: 'Another user shared the site: mcpit pulls the sitepack, scans it on this machine, then calls. No exploration needed.' },
-    native: { on: ['call','native','result'], note: 'The site already has WebMCP, OpenAPI or OpenSearch: mcpit uses it directly.' }
+    first:  { on: ['call','native','local','registry','explore','save','result'], note: 'First visit, not in the registry: every rung misses, so mcpit explores (slow). It saves the sitepack and offers to submit it.' },
+    repeat: { on: ['call','native','local','result'], note: 'Repeat visit: the local sitepack hits. No LLM, no page analysis.' },
+    shared: { on: ['call','native','local','registry','result'], note: 'Another user shared the site: mcpit pulls the active, signed version and calls. No exploration.' },
+    native: { on: ['call','native','result'], note: 'The site already has MCP, OpenAPI or OpenSearch: mcpit uses it directly.' }
   };
   const rungs = document.querySelectorAll('#ladder .rung');
   const note = document.getElementById('ladder-note');
-  const buttons = document.querySelectorAll('#ladder .seg button');
+  const lb = document.querySelectorAll('#ladder .seg button');
   function show(name) {
     const c = cases[name];
     rungs.forEach(r => r.classList.toggle('dim', !c.on.includes(r.dataset.r)));
-    buttons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.case === name)));
+    lb.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.case === name)));
     note.textContent = c.note;
   }
-  buttons.forEach(b => b.addEventListener('click', () => show(b.dataset.case)));
+  lb.forEach(b => b.addEventListener('click', () => show(b.dataset.case)));
   show('first');
+
+  const sc = {
+    dup:     { on: ['intake','canon','dup','o-idem'], chip: ['idempotent',''], text: 'Same hash, same account: the registry returns the existing submission ID. Nothing new is stored.' },
+    confirm: { on: ['intake','canon','dup','o-conf'], chip: ['confirmation','ok'], text: 'Same hash, other unlinked account: +1 independent agreement. The version gains trust.' },
+    fix:     { on: ['intake','canon','dup','scan','diff','queue','screen','o-promote'], chip: ['promoted','ok'], text: 'The active probe fails; the candidate probe passes; jev agrees the change fixes the tool. Only that tool gets a new revision.' },
+    reg:     { on: ['intake','canon','dup','scan','diff','queue','screen','o-rej2'], chip: ['rejected','bad'], text: 'The candidate removes a passing tool and its probe fails on replay. The active version stays.' },
+    risky:   { on: ['intake','canon','dup','scan','diff','queue','screen','o-quar'], chip: ['quarantined','warm'], text: 'A new write tool is a risky change. jev cannot approve it alone, so it waits for a moderator.' },
+    poison:  { on: ['intake','canon','dup','scan','o-rej'], chip: ['rejected','bad'], text: 'The static scan finds a request to a domain that is not the site (origin rule). Rejected at submit, before any screening cost.' }
+  };
+  const steps = document.querySelectorAll('#pipeline .step');
+  const pb = document.querySelectorAll('#pipeline .seg button');
+  const chip = document.getElementById('out-chip'), txt = document.getElementById('out-text');
+  function play(k) {
+    const s = sc[k];
+    steps.forEach(g => g.classList.toggle('dim', !s.on.includes(g.dataset.k)));
+    pb.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === k)));
+    chip.textContent = s.chip[0]; chip.className = 'chip ' + s.chip[1]; txt.textContent = s.text;
+  }
+  pb.forEach(b => b.addEventListener('click', () => play(b.dataset.s)));
+  play('fix');
 })();
 </script>
