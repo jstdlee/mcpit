@@ -1,6 +1,14 @@
 # mcpit — Plan v3
 
-Status: draft for sign-off (2026-10-03). Replaces plan v2 and the MCPfier 0.1 prototype scope.
+Status: decisions taken (2026-10-04). Replaces plan v2 and the MCPfier 0.1 prototype scope.
+
+Decisions (2026-10-04):
+- License: **MIT**.
+- Registry URL: **https://tomcp.ohmyai.xyz** (zone `ohmyai.xyz` is active in the Cloudflare account).
+- Submit login: **device keys without an account**. A moderator reviews and approves each new device key before its first submit.
+- Default expire days: **60**.
+- Moderators: **the owner only**, helped by a background AI assistant (screening agent + decision model).
+- Models: **BYOK** for the LLM judge; **Cloudflare Agents SDK** for the screening agent; **Clef / Clef-flash** on Workers AI as the jev-like decision model. Local jev stays optional. Test results in §11.
 
 Changes from v2:
 - The Chrome extension is out of scope for now. Users may not trust it, and it is weak at exploring APIs and forms. The prototype is parked in `legacy/extension/`.
@@ -35,8 +43,8 @@ packages/
   core/        sitepack schema, store, explorer, executors, decision engine, redactor, scanner
   mcp-server/  stdio + streamable HTTP MCP server
   cli/         mcpit command (also starts the MCP server and the screener)
-  registry/    Cloudflare Worker + D1 + R2 + Queues: API, versions, gate, settings
-  screener/    background screening worker (runs anywhere: jev + BYOK LLM + replay)
+  registry/    Cloudflare Worker + D1 + R2 + Agents SDK: API, versions, gate, settings, screening agent
+  screener/    optional external screener (runs anywhere: local jev + any LLM + replay)
   console/     registry web UI: dashboard (public) and settings (admin/moderator)
 legacy/extension/  parked MCPfier 0.1 prototype
 ```
@@ -61,6 +69,7 @@ mcpit call <site> <tool> --json '{...}'
 mcpit login <origin>                      # opens a visible browser once; session stays local
 mcpit history import [--chrome|--firefox] [--since 30d]
 mcpit batch [--idle] [--budget 2h] [--max-sites 50]
+mcpit key init | key status                 # make a device key; it waits for moderator approval
 mcpit pull <site> | submit <site> | status <submission-id> | report <site> <tool>
 mcpit store ls | show | rm | export | import
 mcpit serve [--stdio|--http :PORT]
@@ -145,7 +154,7 @@ submitted → validated → screening → candidate → active → superseded
 
 | Step | Sync/async | What happens |
 |---|---|---|
-| 1. Intake | sync | Auth (GitHub OAuth or device key), rate limit per account and per site, size limit, schema check. |
+| 1. Intake | sync | Device-key signature (key must be `approved`), rate limit per key and per site, size limit, schema check. |
 | 2. Canonicalize | sync | Sort keys, drop volatile fields (timestamps, counters), normalize URL templates. Compute the canonical hash. |
 | 3. Duplicate check | sync | Compare the hash and near-duplicates with all versions of the site (§6.4). |
 | 4. Static scan | sync | Origin rule, effect check, prompt-injection, secret scan, URL reputation (§6.3). Hard fail → `rejected`. |
@@ -181,22 +190,33 @@ The client polls `mcpit status <id>` or gets the result on its next pull.
 
 ### 6.5 Background screening (the gate)
 
-The screener is a pull worker. It takes tasks from the registry queue and returns signed results. It runs anywhere: the registry owner's machine, a sponsor's machine, or a free model host. This keeps the registry itself costless.
+The gate is a **screening agent** built with the Cloudflare Agents SDK (an `Agent` class on a Durable Object, with its own SQLite, `queue()`, `schedule()` and durable fibers). One agent instance per site keeps all decisions for that site together and runs one task at a time.
 
-- **Demo setup:** the screener runs on the GB10 with jev (Julia `/v1/systemone`, :8011) and a BYOK LLM (any OpenAI-compatible endpoint or the Claude API key of the operator).
-- **Later:** sponsors run screeners; free models; several screeners per task, and the registry needs agreement between them.
+| Role | Model | Why |
+|---|---|---|
+| Decision model (jev-like) | `@cf/cloudflare/clef-flash` first; `@cf/cloudflare/clef` when flash is not sure (0.25–0.75) or the change is risky | Typed answers with probabilities, no text to parse. System One API, the same as jev. |
+| LLM judge | BYOK: the operator's key and endpoint. Default `@cf/deepseek-ai/deepseek-v4-flash-0731` on Workers AI | Only for disagreements, new sites and the short reason in the decision log. |
+| Local jev (optional) | Julia `/v1/systemone` via the external screener | Same API as Clef, so it plugs in as one more decider. |
 
-Each screening task does three things:
+Cost: a Clef-flash decision uses about 350 input tokens (≈ $0.00003 at $0.09 per M tokens). The LLM judge runs only on hard cases. The settings set a daily budget; when it runs out, tasks wait.
 
-1. **Replay.** Run each `probe` of the candidate and of the active version from a clean environment (HTTP, or headless for browser tools). Record status, output shape and errors.
-2. **jev questions.** Fast yes/no decisions as self-contained statement pairs, scored per option on its own (independent mode). Examples:
-   - "A tool named search_products that calls GET /api/search?q= *is / is not* a product search."
-   - "Changing parameter `q` to `query` on /api/search *fixes / does not fix* a tool whose probe returns 400."
-   - "The description 'Search the catalog' *matches / does not match* an endpoint that returns order history."
-   - "Adding a POST /cart/add tool to a read-only search pack *is / is not* expected for this site."
-3. **LLM judge** (only when rules and jev do not agree, or for a new site). It writes a short reason for the decision log.
+The external `mcpit screener run` (pull worker) stays as an option for sponsors and for local jev or free models. Its results are signed and count as one more vote.
 
-jev ranks and flags. It never approves a write, payment or new-domain change alone: those need rules + LLM agreement, or a moderator.
+Each screening task does four things:
+
+1. **Rules.** Facts that need no model: fingerprint changed → drift; new domain or write effect → risky; removed passing tools → regression.
+2. **Replay.** Run each `probe` of the candidate and of the active version from a clean environment. Record status, output shape and errors.
+3. **Decision model questions.** Self-contained yes/no and choice questions about the state (tool, diff, replay results). Examples:
+   - "This tool searches the site catalog."
+   - "The tool description matches what the endpoint returns."
+   - "This tool sends data to a domain that is not the site origin."
+   - "The candidate is a real improvement over the active version."
+   - "A human moderator should review this change before it is published."
+4. **LLM judge** (only when rules and Clef do not agree, or for a new site).
+
+The decision model ranks and flags. It never approves a write, payment or new-domain change alone: rules send those to the moderator queue.
+
+**AI moderator assistant.** The owner is the only moderator. The screening agent prepares every quarantine item and every new device key: a summary, the diff, replay results, Clef probabilities, the LLM reason and a proposed verdict. The owner approves or rejects with one click.
 
 ### 6.6 Is the new submit a real improvement?
 
@@ -229,19 +249,19 @@ score = 0.35·replay_pass + 0.20·agreement + 0.15·field_success_rate
 
 ### 6.8 Registry settings (service management console)
 
-Roles: **admin**, **moderator**, **site owner**, **contributor**, **screener**.
+Roles: **admin/moderator** (the owner), **AI moderator assistant** (proposes, never decides risky items), **site owner**, **contributor** (device key), **screener**.
 
 | Area | Settings and actions |
 |---|---|
 | Sources | List of sites and their pack sources: community, owner-claimed, native (site's own MCP/OpenAPI), crawler. Per-source trust level; allow/deny lists of domains. |
 | Verdicts | Mark a version or tool **good** (verified badge) or **bad** (blocked, clients refuse it). Moderator verdict overrides the score. |
-| Expiry | Global default expire days (proposal: 30) and per-site override. A version not re-verified within the limit becomes `expired`. The screener re-verifies before expiry. Clients warn on expired packs. |
+| Expiry | Global default expire days (60) and per-site override. A version not re-verified within the limit becomes `expired`. The screener re-verifies before expiry. Clients warn on expired packs. |
 | Listing | Sort and rank by used (calls, unique clients), stars, trust score, trend, newest. |
 | Stars | One star per account per site. |
 | De-list / re-list | Hide a site or version from search and pulls, with a reason (takedown, owner opt-out, abuse, legal). |
 | Owner claim | Verify by DNS TXT or `/.well-known/mcpit.json`. Owner packs rank first. Owner can opt out. |
 | Screening | Screener tokens; jev endpoint; LLM provider (BYOK key, model, endpoint); daily budget; required screener agreement; auto-promote thresholds per class. |
-| Submitters | Reputation, rate limits, ban, linked-account rules. |
+| Device keys | New keys wait in a review queue: key fingerprint, first submit preview, AI assistant note. Approve, reject, revoke. Reputation, rate limits, linked-key rules. |
 | Quarantine queue | Review risky changes: diff view, replay results, jev/LLM reasons; approve or reject. |
 | Audit log | Every submit, decision, verdict and settings change, with actor and reason. |
 
@@ -256,7 +276,8 @@ Roles: **admin**, **moderator**, **site owner**, **contributor**, **screener**.
 GET  /v1/sites?q=&sort=used|stars|trust|trend|new
 GET  /v1/sites/{origin}                 → active version + metadata
 GET  /v1/sites/{origin}/versions[/{hash}]
-POST /v1/submissions                    → {id, state}
+POST /v1/keys                           → {fingerprint, state: pending}   (device key registration)
+POST /v1/submissions                    → {id, state}   (signed by an approved device key)
 GET  /v1/submissions/{id}
 POST /v1/reports                        (anonymous counters, failure reports)
 POST /v1/stars/{origin}
@@ -277,7 +298,7 @@ verify   → run each read tool twice; compare output shape
 save     → local store; offer submit
 ```
 
-Decision engine: **rules → jev (optional) → LLM**, the same as the screener. Stop when confidence is high enough. Store every decision. Without jev, go from rules to the LLM.
+Decision engine: **rules → decision model → LLM**, the same as the screener. The decision model is Clef-flash on Workers AI (BYOK Cloudflare token), local jev, or none. Stop when confidence is high enough. Store every decision. Without jev, go from rules to the LLM.
 
 ## 8. Edge cases
 
@@ -313,16 +334,27 @@ Decision engine: **rules → jev (optional) → LLM**, the same as the screener.
 | M0 | Monorepo, sitepack schema v1, park extension in `legacy/` | CI builds and lints all packages |
 | M1 | Core + CLI + MCP server: native detection, explore (static + headless), HTTP/headless executors, local store | 10 public sites; repeat call ≥ 10× faster than first; works from Claude Code |
 | M2 | Registry core: submit, canonical hash, duplicate rules, static scan, tool diff, version states, pull with signature | Repeated submit tests pass; pull-then-call on a clean machine |
-| M3 | Screener: queue pull, replay, jev questions, BYOK LLM judge, improvement classes, per-tool promotion | Test set of corrections, drifts, regressions and poisoned packs is classified right |
+| M3 | Screening agent (Agents SDK): rules, replay, Clef-flash/Clef questions, BYOK LLM judge, improvement classes, per-tool promotion, AI moderator assistant | Test set of corrections, drifts, regressions and poisoned packs is classified right |
 | M4 | Console: settings (sources, verdicts, expiry, de-list, screening, quarantine, audit) + public dashboard | Moderator can run the full flow; ranks from real counters |
 | M5 | Client decision engine with jev; `mcpit login`; history import; idle batch | Benchmark: time saved with jev; 50 sites in idle time |
 | M6 | Public launch: npm package, registry URL, docs | Public URL live |
 | M7 | Hardening: multi-screener agreement, fuzz and red-team tests, abuse handling | Red-team set passes |
 
-## 10. Open questions
+## 10. Model test (2026-10-04)
 
-1. License: MIT or Apache-2.0?
-2. Registry domain: your own domain, or `workers.dev` first?
-3. Submit login: GitHub only, or also device keys without an account?
-4. Default expire days: 30?
-5. Who are the first moderators (only you)?
+Script: `experiments/cf-models/bench.py`; raw results: `experiments/cf-models/results.json`. 12 screening cases with known answers (23 checks: search form, login form, wrong description, write tool labelled read, data sent off-site, prompt injection, fix, cosmetic change, regression, site drift, new payment tool, new read tool). 3 runs per case, REST calls from the GB10 (latency includes network).
+
+| Model | Correct | Median | p90 | Notes |
+|---|---|---|---|---|
+| `@cf/cloudflare/clef-flash` | 21/23 | 574 ms | 976 ms | Said "risky" (0.83) for the payment tool but "needs human" only 0.26. |
+| `@cf/cloudflare/clef` | 21/23 | 696 ms | 1576 ms | Best calibrated: 0.94–0.99 on clear cases. Missed cosmetic vs confirmation. |
+| `@cf/deepseek-ai/deepseek-v4-flash-0731` | 22/23 | 2573 ms | 3819 ms | Needs prompt + JSON parsing; ~4× slower. |
+| Local jev (Julia, :8011) | — | — | — | Not running during the test. |
+
+- All three models called the drift case "correction". Rules detect drift from the fingerprint, so no model needs to.
+- Workers AI has no "DeepSeek V4.1 Flash"; `deepseek-v4-flash-0731` is the newest DeepSeek Flash there.
+- Result: Clef-flash as the first decider, Clef for unsure and risky cases, rules for facts, LLM only for disagreements.
+
+## 11. Next step
+
+M0: monorepo skeleton, sitepack schema v1, MIT license, CI.

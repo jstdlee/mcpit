@@ -91,7 +91,7 @@ footer{color:var(--muted);font-size:.9rem}
 
 <div class="wrap">
 <header>
-  <span class="eyebrow">jstdlee/mcpit · plan v3 · 2026-10-03 · draft for sign-off</span>
+  <span class="eyebrow">jstdlee/mcpit · plan v3 · 2026-10-04 · decisions taken</span>
   <h1>mcpit: any website, as an MCP server</h1>
   <p class="lede">The first visit to a site is slow: mcpit explores it and saves a <strong>sitepack</strong>. Later visits are fast. The <strong>registry</strong> decides which shared sitepack version is good, so every user gets the best one.</p>
 </header>
@@ -285,33 +285,45 @@ footer{color:var(--muted);font-size:.9rem}
   <div class="settings">
     <div class="panel"><h3>Sources</h3><p>Sites and their pack sources: community, owner-claimed, native, crawler. Trust per source. Domain allow and deny lists.</p></div>
     <div class="panel"><h3>Mark good / bad</h3><p>Verified badge, or blocked so clients refuse it. A moderator verdict overrides the score.</p></div>
-    <div class="panel"><h3>Expire days</h3><p>Global default (proposed 30) and per-site override. The screener re-verifies before expiry; clients warn after.</p></div>
+    <div class="panel"><h3>Expire days</h3><p>Global default 60 days and per-site override. The screener re-verifies before expiry; clients warn after.</p></div>
     <div class="panel"><h3>Sort and rank</h3><p>By use (calls, unique clients), stars, trust, trend, newest. One star per account per site.</p></div>
     <div class="panel"><h3>De-list / re-list</h3><p>Hide a site or version from search and pulls, with a reason: takedown, owner opt-out, abuse, legal.</p></div>
     <div class="panel"><h3>Owner claim</h3><p>DNS TXT or <code>/.well-known/mcpit.json</code>. Owner packs rank first; owners can opt out.</p></div>
-    <div class="panel"><h3>Screening</h3><p>Screener tokens, jev endpoint, BYOK LLM key and model, daily budget, required agreement, auto-promote limits per class.</p></div>
-    <div class="panel"><h3>Submitters</h3><p>Reputation, rate limits, bans, linked-account rules.</p></div>
+    <div class="panel"><h3>Screening</h3><p>Clef-flash/Clef thresholds, BYOK LLM key and model, external screener tokens, daily budget, required agreement, auto-promote limits per class.</p></div>
+    <div class="panel"><h3>Device keys</h3><p>No accounts. Each new key waits for review: fingerprint, first submit preview, AI assistant note. Approve, reject, revoke.</p></div>
     <div class="panel"><h3>Quarantine queue</h3><p>Diff view, replay results, jev and LLM reasons. Approve or reject.</p></div>
   </div>
 </section>
 
 <section id="screener">
-  <span class="eyebrow">Costless gate</span>
-  <h2>Who pays for screening?</h2>
-  <div class="grid2">
-    <div class="panel"><h3>Demo</h3><ul>
-      <li>The screener runs on the GB10: <code>mcpit screener run</code>.</li>
-      <li>jev = Julia <code>/v1/systemone</code> on :8011.</li>
-      <li>LLM = BYOK: any OpenAI-compatible endpoint, or a Claude API key.</li>
-      <li>It pulls tasks, so the registry needs no GPU and no paid model.</li>
-    </ul></div>
-    <div class="panel"><h3>Later</h3><ul>
-      <li>Sponsors and volunteers run screeners with free models.</li>
-      <li>Several screeners per task; the registry needs them to agree.</li>
-      <li>Signed results, screener reputation, random re-checks.</li>
-      <li>Replay is polite: low rate, robots.txt, read probes only.</li>
-    </ul></div>
-  </div>
+  <span class="eyebrow">Gate · models</span>
+  <h2>Screening agent and models</h2>
+  <p>The gate is a screening agent built with the Cloudflare Agents SDK: one Durable Object per site, with its own SQLite, queue and schedules. The owner is the only moderator; the agent prepares every decision for one-click review.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Role</th><th>Model</th><th>Used when</th></tr></thead>
+    <tbody>
+      <tr><td>Facts</td><td>Rules</td><td>Always first: fingerprint changed, new domain, write effect, removed tools.</td></tr>
+      <tr><td>Decision (jev-like)</td><td><code>@cf/cloudflare/clef-flash</code></td><td>Every screening question. Typed answers with probabilities.</td></tr>
+      <tr><td>Second opinion</td><td><code>@cf/cloudflare/clef</code></td><td>Flash is unsure (0.25–0.75) or the change is risky.</td></tr>
+      <tr><td>LLM judge</td><td>BYOK; default <code>@cf/deepseek-ai/deepseek-v4-flash-0731</code></td><td>Rules and Clef disagree, a new site, or a reason for the log.</td></tr>
+      <tr><td>Optional</td><td>Local jev via external screener</td><td>Same System One API; counts as one more vote.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="test">
+  <span class="eyebrow">Model test · 2026-10-04</span>
+  <h2>Clef vs DeepSeek on 12 screening cases</h2>
+  <p>23 checks with known answers: search and login forms, wrong descriptions, a write tool labelled read, data sent off-site, prompt injection, a fix, a cosmetic change, a regression, site drift, a new payment tool and a new read tool. 3 runs each, REST from the GB10 (latency includes network).</p>
+  <div class="tw"><table>
+    <thead><tr><th>Model</th><th>Correct</th><th>Median</th><th>p90</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="m">clef-flash</td><td>21/23</td><td>574 ms</td><td>976 ms</td><td>Class "risky" right (0.83), but "needs human" only 0.26.</td></tr>
+      <tr><td class="m">clef</td><td>21/23</td><td>696 ms</td><td>1576 ms</td><td>Best calibrated: 0.94–0.99 on clear cases.</td></tr>
+      <tr><td class="m">deepseek-v4-flash</td><td>22/23</td><td>2573 ms</td><td>3819 ms</td><td>Needs a prompt and JSON parsing; about 4× slower.</td></tr>
+    </tbody>
+  </table></div>
+  <p>All three called site drift a "correction". Rules see drift from the fingerprint, so no model needs to decide it. Workers AI has no DeepSeek V4.1 Flash; <code>v4-flash-0731</code> is the newest Flash there.</p>
 </section>
 
 <section id="milestones">
@@ -323,7 +335,7 @@ footer{color:var(--muted);font-size:.9rem}
       <tr><td class="m">M0</td><td>Monorepo, sitepack schema v1, park extension in <code>legacy/</code></td><td>CI builds and lints all packages</td></tr>
       <tr><td class="m">M1</td><td>Core + CLI + MCP server: native detection, explore, HTTP/headless executors, local store</td><td>10 public sites; repeat ≥ 10× faster; works from Claude Code</td></tr>
       <tr><td class="m">M2</td><td>Registry core: submit, hash, duplicate rules, static scan, tool diff, states, signed pull</td><td>Repeated-submit tests pass; pull-then-call on a clean machine</td></tr>
-      <tr><td class="m">M3</td><td>Screener: queue, replay, jev questions, BYOK LLM judge, classes, per-tool promotion</td><td>Test set of fixes, drifts, regressions, poisoned packs classified right</td></tr>
+      <tr><td class="m">M3</td><td>Screening agent (Agents SDK): rules, replay, Clef questions, BYOK LLM judge, classes, per-tool promotion</td><td>Test set of fixes, drifts, regressions, poisoned packs classified right</td></tr>
       <tr><td class="m">M4</td><td>Console: settings, quarantine, audit + public dashboard</td><td>Moderator runs the full flow; ranks from real counters</td></tr>
       <tr><td class="m">M5</td><td>Client decision engine with jev; <code>mcpit login</code>; history import; idle batch</td><td>Benchmark of time saved with jev; 50 sites in idle time</td></tr>
       <tr><td class="m">M6</td><td>Public launch: npm, registry URL, docs</td><td>Public URL live</td></tr>
@@ -333,15 +345,16 @@ footer{color:var(--muted);font-size:.9rem}
 </section>
 
 <section id="questions">
-  <span class="eyebrow">Needs your answer</span>
-  <h2>Open questions</h2>
-  <ol class="qs">
-    <li>License: MIT or Apache-2.0?</li>
-    <li>Registry domain: your own domain, or <code>workers.dev</code> first?</li>
-    <li>Submit login: GitHub only, or also device keys without an account?</li>
-    <li>Default expire days: 30?</li>
-    <li>First moderators: only you?</li>
-  </ol>
+  <span class="eyebrow">Decisions · 2026-10-04</span>
+  <h2>Decisions</h2>
+  <div class="tw"><table><tbody>
+    <tr><td>License</td><td>MIT</td></tr>
+    <tr><td>Registry URL</td><td><code>https://tomcp.ohmyai.xyz</code></td></tr>
+    <tr><td>Submit login</td><td>Device keys without an account; the moderator approves each new key.</td></tr>
+    <tr><td>Expire days</td><td>60</td></tr>
+    <tr><td>Moderators</td><td>The owner, with an AI assistant for screening and decisions.</td></tr>
+    <tr><td>Models</td><td>BYOK LLM, Cloudflare Agents SDK, Clef / Clef-flash as the jev-like model.</td></tr>
+  </tbody></table></div>
 </section>
 
 <footer>Source of truth: <span class="mono">PLAN.md</span> in github.com/jstdlee/mcpit.</footer>
