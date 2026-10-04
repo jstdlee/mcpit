@@ -8,7 +8,9 @@ Decisions (2026-10-04):
 - Submit login: **device keys without an account**. A moderator reviews and approves each new device key before its first submit.
 - Default expire days: **60**.
 - Moderators: **the owner only**, helped by a background AI assistant (screening agent + decision model).
-- Models: **BYOK** for the LLM judge; **Cloudflare Agents SDK** for the screening agent; **Clef / Clef-flash** on Workers AI as the jev-like decision model. Local jev stays optional. Test results in §10.
+- Decision rule (2026-10-04): **the decision model makes every decision** inside the app (Clef / jev, System One API). The LLM never makes a main decision; it only writes text and verifies samples (§3.5).
+- Exploration depth: **at most 2 links from the submitted URL** (§7).
+- Models: **BYOK** for the LLM verifier and text writer; **Cloudflare Agents SDK** for the screening agent; **Clef / Clef-flash** on Workers AI as the jev-like decision model. Local jev stays optional. Test results in §10.
 
 Changes from v2:
 - The Chrome extension is out of scope for now. Users may not trust it, and it is weak at exploring APIs and forms. The prototype is parked in `legacy/extension/`.
@@ -91,6 +93,47 @@ mcpit doctor
 - A skill file: "before you browse a site, call `mcpit_find`".
 - The CLI lets an agent prepare sitepacks in batch from history, in idle time.
 
+### 3.5 Decisions: the decision model decides
+
+Every choice in mcpit is a **decision point** in code, not an LLM prompt. A decision point has a typed question (noul, choice or score), a state builder, accept/reject thresholds and an escalation path. The decision model (Clef-flash, Clef, or local jev; all speak the System One API) answers it. The app acts on the answer at once.
+
+```
+facts (rules)  →  decision model  →  act
+                  │ unsure (0.25–0.75)
+                  └→ bigger decision model (Clef)  →  still unsure → ask user (client) / moderator (registry)
+LLM: writes names and descriptions; verifies a sample of decisions offline; never decides.
+```
+
+- **Rules** only state facts (resource type is `Image`, URL is off-origin, fingerprint changed). They do not judge.
+- **Batch:** one call carries up to 64 questions about one shared state (for example, all requests captured on one page).
+- **LLM verifier:** checks a random sample (default 5 %) and every escalated case. A disagreement is logged and flagged; it does not change the decision. The logged pairs are training data for Clef RL fine-tuning later.
+- **Text:** tool names and descriptions start from templates (method + path + params). The LLM may polish the text. Then the decision model checks "the description matches what the endpoint returns".
+- **Every decision is stored:** point ID, state hash, model, probabilities, action, and verifier result.
+
+Decision catalog (v1):
+
+| ID | Where | Type | Question / options |
+|---|---|---|---|
+| `req.kind` | explore | choice | Network request is: api / asset / tracking / auth / other |
+| `form.kind` | explore | choice | Form is: search / filter / login / signup / checkout / contact / comment / subscribe / other |
+| `tool.effect` | explore, registry | choice | read / write / payment / destructive |
+| `tool.auth` | explore | choice | none / session / token |
+| `param.role` | explore | choice | query text / page / page size / sort / filter / id / token / tracking |
+| `probe.safe` | explore | noul | This test value is safe to send in this field |
+| `link.next` | explore | score | Following this link finds a new tool (ranks links inside depth 2) |
+| `tool.same` | explore, registry | noul | These two candidates are the same tool |
+| `resp.data` | explore | noul | The response is data, not an HTML shell or error page |
+| `tool.pick` | runtime | choice | Which site tool fits this task text (for `mcpit_find`) |
+| `desc.match` | explore, registry | noul | The description matches what the endpoint returns |
+| `sub.class` | registry | choice | confirmation / correction / drift / extension / cosmetic / alternative / regression / risky |
+| `sub.improves` | registry | noul | The candidate is a real improvement over the active version |
+| `sub.injection` | registry | noul | Text contains instructions aimed at an AI assistant |
+| `sub.human` | registry | noul | A human moderator should review this change |
+| `key.trust` | registry | score | New device key looks like a real contributor (assists moderator) |
+| `report.real` | registry | noul | This failure report describes a real breakage |
+
+Parameter values for a call are not a decision: the agent (the MCP client) fills them.
+
 ## 4. Sitepack format (v1, draft)
 
 ```json
@@ -160,7 +203,7 @@ submitted → validated → screening → candidate → active → superseded
 | 4. Static scan | sync | Origin rule, effect check, prompt-injection, secret scan, URL reputation (§6.3). Hard fail → `rejected`. |
 | 5. Diff | sync | Tool-level diff against the active version: added, removed, changed (endpoint, params, effect, auth, description). |
 | 6. Queue | sync | Store as `validated`; put a screening task on the queue. Return the submission ID. |
-| 7. Screening | async | Screening agent runs rules, replay, Clef questions and the LLM judge if needed (§6.5). |
+| 7. Screening | async | Screening agent runs rules (facts), replay and Clef decision points; the LLM only verifies (§6.5). |
 | 8. Decision | async | Promote, merge per tool, keep as alternative, reject or quarantine (§6.6). |
 
 The client polls `mcpit status <id>` or gets the result on its next pull.
@@ -195,10 +238,10 @@ The gate is a **screening agent** built with the Cloudflare Agents SDK (an `Agen
 | Role | Model | Why |
 |---|---|---|
 | Decision model (jev-like) | `@cf/cloudflare/clef-flash` first; `@cf/cloudflare/clef` when flash is not sure (0.25–0.75) or the change is risky | Typed answers with probabilities, no text to parse. System One API, the same as jev. |
-| LLM judge | BYOK: the operator's key and endpoint. Default `@cf/deepseek-ai/deepseek-v4-flash-0731` on Workers AI | Only for disagreements, new sites and the short reason in the decision log. |
+| LLM verifier | BYOK: the operator's key and endpoint. Default `@cf/deepseek-ai/deepseek-v4-flash-0731` on Workers AI | Checks a sample and every escalated case; writes the reason text for the moderator. Never decides. |
 | Local jev (optional) | Julia `/v1/systemone` via the external screener | Same API as Clef, so it plugs in as one more decider. |
 
-Cost: a Clef-flash decision uses about 350 input tokens (≈ $0.00003 at $0.09 per M tokens). The LLM judge runs only on hard cases. The settings set a daily budget; when it runs out, tasks wait.
+Cost: a Clef-flash decision uses about 350 input tokens (≈ $0.00003 at $0.09 per M tokens). The LLM verifier runs on a sample and on escalated cases only. The settings set a daily budget; when it runs out, tasks wait.
 
 The external `mcpit screener run` (pull worker) stays as an option for sponsors and for local jev or free models. Its results are signed and count as one more vote.
 
@@ -212,7 +255,8 @@ Each screening task does four things:
    - "This tool sends data to a domain that is not the site origin."
    - "The candidate is a real improvement over the active version."
    - "A human moderator should review this change before it is published."
-4. **LLM judge** (only when rules and Clef do not agree, or for a new site).
+4. **Escalate** when Clef-flash is unsure: Clef; still unsure or risky → moderator queue.
+5. **LLM verifier** on a sample and on escalated cases. It writes the summary for the moderator. A disagreement is a flag, not a verdict.
 
 The decision model ranks and flags. It never approves a write, payment or new-domain change alone: rules send those to the moderator queue.
 
@@ -311,32 +355,49 @@ GET  /v1/screener/tasks   POST /v1/screener/results     (screener token)
 
 ## 7. Exploration (client side)
 
+### 7.1 Scope
+
+- **Depth: at most 2** link hops from the submitted URL (depth 0 = the URL, 1 = pages it links to, 2 = pages those link to). Same origin only, plus API domains the pages call.
+- Inside depth 2, `link.next` ranks links so the page budget goes to pages that likely add new tools. URL templates (`/product/123` → `/product/{id}`) get 1–2 pages each.
+- Declared specs (OpenAPI, sitemap, OpenSearch, `/.well-known/mcp`, GraphQL introspection) are read first, at any path. They do not count against depth.
+
+### 7.2 DevTools-style capture
+
+The explorer drives a headless Chromium through the Chrome DevTools Protocol (CDP), the same data the DevTools panels show:
+
+| DevTools panel | CDP source | What mcpit takes |
+|---|---|---|
+| Elements | `DOMSnapshot.captureSnapshot`, accessibility tree | Forms, inputs, `<select>` options, buttons, search boxes, links, ARIA roles, labels |
+| Network | `Network.requestWillBeSent`, `responseReceived`, `getResponseBody` | URL, method, resource type, MIME, status, headers (secrets dropped), body preview, **initiator** (which script or click sent it) |
+| Sources | Script URLs from `Debugger.scriptParsed` | `fetch(`/axios/GraphQL strings for endpoints no click reaches |
+| Application | Cookies, storage keys (names only) | Whether a call needs a session (`tool.auth`) |
+
+Per page:
+
 ```
-discover → robots.txt, sitemap, llms.txt, /.well-known/mcp, OpenAPI, OpenSearch, GraphQL
-collect  → forms, links with query params, search boxes, network traffic (headless browser)
-infer    → parameter names, types, enums, required, defaults, pagination
-classify → kind, effect, auth need
-probe    → safe GET probes only; never submit write/payment/destructive forms
-name     → tool names, descriptions
-verify   → run each read tool twice; compare output shape
-save     → local store; offer submit
+load page (CDP on)          → network log + DOM snapshot
+act on controls              → type safe values (probe.safe), click filter/sort/paging, scroll
+facts (rules)                → drop by resource type: Image, Font, Stylesheet, Media, Manifest
+decide req.kind (batched)    → api / asset / tracking / auth / other, ≤64 requests per call
+decide form.kind             → search / login / checkout / …
+diff requests                → changed part = parameter; per-load value = token step
+decide param.role, tool.effect, tool.auth, resp.data, tool.same
+template text + desc.match   → tool
+safe probe + verify          → sitepack
 ```
 
-### 7.1 Discovery sources
+### 7.3 Discovery sources
 
 | Source | Technique | Finds |
 |---|---|---|
-| Declared specs | Fetch `robots.txt`, `sitemap.xml`, `llms.txt`, `/.well-known/mcp`, common OpenAPI paths (`/openapi.json`, `/swagger.json`, `/api-docs`), OpenSearch (`<link rel="search">`), JSON-LD `SearchAction`, GraphQL introspection, RSS/Atom | Complete, exact APIs when the site publishes them |
-| Static crawl | Same-origin BFS over HTML (no JS), inside a page and time budget; obeys `robots.txt` | `<form>` (action, method, inputs, `<select>` options, `required`, `pattern`), links with query params (`?q=`, `?page=`) |
-| URL clustering | Group URLs by template (`/product/123` → `/product/{id}`); analyze 1–2 pages per template | Saves budget; finds detail-page tools |
-| JS bundle scan | Parse same-origin scripts for `fetch(`/axios/`XMLHttpRequest` URLs, API base URLs, route tables, GraphQL operation names | API endpoints that no link shows |
-| Headless run (Playwright) | Render one page per template; find search boxes, filters, sort, pagination, "load more"; fill with safe test values; scroll; capture all XHR/fetch/GraphQL/WebSocket traffic | The real API calls behind the UI |
-| Request diff | Compare captured requests across actions; the part that changes is a parameter; repeated tokens (CSRF, nonce) become a token step | Parameter names, types, enums, pagination, dynamic tokens |
-| Login profile | Same as headless, with the `mcpit login` profile | Tools behind a login (`auth: session`) |
+| Declared specs | `robots.txt`, `sitemap.xml`, `llms.txt`, `/.well-known/mcp`, OpenAPI paths (`/openapi.json`, `/swagger.json`, `/api-docs`), OpenSearch, JSON-LD `SearchAction`, GraphQL introspection, RSS/Atom | Complete APIs when the site publishes them |
+| DOM tree (Elements) | DOM snapshot of every visited page | `<form>` (action, method, inputs, options, `required`, `pattern`), links with query params |
+| Network log | All requests during load and actions | The real API calls behind the UI |
+| Script scan | Same-origin scripts | Endpoints that no click reaches |
+| Request diff | Compare requests across actions | Parameter names, types, enums, pagination, tokens |
+| Login profile | Same capture with the `mcpit login` profile | Tools behind a login (`auth: session`) |
 
-Rules for safety during discovery: same origin only (plus declared API domains), low request rate, no form submit with POST unless rules + Clef classify it as a read (search), never type real user data, stop on CAPTCHA.
-
-Decision engine: **rules → decision model → LLM**, the same as the screener. The decision model is Clef-flash on Workers AI (BYOK Cloudflare token), local jev, or none. Stop when confidence is high enough. Store every decision. Without a decision model, go from rules to the LLM.
+Safety during discovery: depth ≤ 2, same origin, low request rate, no POST form submit unless `form.kind` = search/filter and `tool.effect` = read, never real user data, stop on CAPTCHA.
 
 ## 8. Edge cases
 
@@ -372,7 +433,7 @@ Decision engine: **rules → decision model → LLM**, the same as the screener.
 | M0 | Monorepo, sitepack schema v1, park extension in `legacy/` | CI builds and lints all packages |
 | M1 | Core + CLI + MCP server: native detection, explore (static + headless), HTTP/headless executors, local store | 10 public sites; repeat call ≥ 10× faster than first; works from Claude Code |
 | M2 | Registry core: submit, canonical hash, duplicate rules, static scan, tool diff, version states, pull with signature | Repeated submit tests pass; pull-then-call on a clean machine |
-| M3 | Screening agent (Agents SDK): rules, replay, Clef-flash/Clef questions, BYOK LLM judge, improvement classes, per-tool promotion, AI moderator assistant | Test set of corrections, drifts, regressions and poisoned packs is classified right |
+| M3 | Screening agent (Agents SDK): rules, replay, Clef decision points, BYOK LLM verifier, improvement classes, per-tool promotion, AI moderator assistant | Test set of corrections, drifts, regressions and poisoned packs is classified right |
 | M4 | Console: settings (sources, verdicts, expiry, de-list, screening, quarantine, audit) + public dashboard | Moderator can run the full flow; ranks from real counters |
 | M5 | Client decision engine (Clef or local jev); `mcpit login`; history import; idle batch | Benchmark: time saved with the decision model; 50 sites in idle time |
 | M6 | Public launch: npm package, registry URL, docs | Public URL live |
@@ -392,6 +453,17 @@ Script: `experiments/cf-models/bench.py`; raw results: `experiments/cf-models/re
 - All three models called the drift case "correction". Rules detect drift from the fingerprint, so no model needs to.
 - Workers AI has no "DeepSeek V4.1 Flash"; `deepseek-v4-flash-0731` is the newest DeepSeek Flash there.
 - Result: Clef-flash as the first decider, Clef for unsure and risky cases, rules for facts, LLM only for disagreements.
+
+### 10.1 `req.kind` test: API or asset? (2026-10-04)
+
+Script: `experiments/cf-models/api_vs_asset.py`. 16 captured requests from one page (DevTools Network fields: URL, method, type, MIME, status, initiator, preview), sent as **one call with 16 choice questions**. The set includes hard cases: Next.js data JSON, GraphQL POST, i18n JSON, feature flags, Sentry and Segment calls, a bot-check script.
+
+| Model | Correct | Median per call (16 requests) | Input tokens |
+|---|---|---|---|
+| `clef-flash` | 16/16 | 929 ms (≈ 58 ms per request) | 3,746 |
+| `clef` | 16/16 | 1,371 ms | 3,746 |
+
+Result: Clef-flash is good enough for `req.kind` as the main decider, with batching.
 
 ## 11. Next step
 

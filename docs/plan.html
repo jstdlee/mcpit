@@ -191,7 +191,7 @@ footer{color:var(--muted);font-size:.9rem}
         <g class="step" data-k="scan"><rect x="310" y="28" width="90" height="56" rx="7" class="box"/><text x="355" y="52" text-anchor="middle">4 scan</text><text x="355" y="70" text-anchor="middle" class="t-muted" font-size="11">origin · secrets</text></g>
         <g class="step" data-k="diff"><rect x="410" y="28" width="90" height="56" rx="7" class="box"/><text x="455" y="52" text-anchor="middle">5 diff</text><text x="455" y="70" text-anchor="middle" class="t-muted" font-size="11">per tool</text></g>
         <g class="step" data-k="queue"><rect x="510" y="28" width="90" height="56" rx="7" class="box"/><text x="555" y="52" text-anchor="middle">6 queue</text><text x="555" y="70" text-anchor="middle" class="t-muted" font-size="11">validated</text></g>
-        <g class="step" data-k="screen"><rect x="620" y="28" width="250" height="56" rx="7" class="box-acc"/><text x="745" y="50" text-anchor="middle" font-weight="600">7 screening</text><text x="745" y="70" text-anchor="middle" class="t-muted" font-size="11">rules → replay → Clef questions → LLM if unsure</text></g>
+        <g class="step" data-k="screen"><rect x="620" y="28" width="250" height="56" rx="7" class="box-acc"/><text x="745" y="50" text-anchor="middle" font-weight="600">7 screening</text><text x="745" y="70" text-anchor="middle" class="t-muted" font-size="11">rules → replay → Clef → Clef 27B → moderator</text></g>
       </g>
       <g class="edge"><path d="M100,56 L110,56" marker-end="url(#ah4)"/><path d="M200,56 L210,56" marker-end="url(#ah4)"/><path d="M300,56 L310,56" marker-end="url(#ah4)"/><path d="M400,56 L410,56" marker-end="url(#ah4)"/><path d="M500,56 L510,56" marker-end="url(#ah4)"/><path d="M600,56 L620,56" marker-end="url(#ah4)"/></g>
       <g font-size="13">
@@ -295,6 +295,68 @@ footer{color:var(--muted);font-size:.9rem}
   </div>
 </section>
 
+<section id="decide">
+  <span class="eyebrow">Principle · 2026-10-04</span>
+  <h2>The decision model decides</h2>
+  <p>Every choice in mcpit is a decision point in code: a typed question, thresholds and an escalation path. Clef (or local jev) answers; the app acts at once. The LLM only writes text and verifies samples.</p>
+  <div class="fig">
+    <svg viewBox="0 0 900 170" role="img" aria-label="Decision flow: rules give facts, Clef-flash decides, unsure goes to Clef, still unsure goes to user or moderator; LLM verifies a sample offline">
+      <defs><marker id="ah6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
+      <g font-size="13">
+        <rect x="10" y="30" width="150" height="56" rx="8" class="box"/><text x="85" y="54" text-anchor="middle" font-weight="600">Rules</text><text x="85" y="72" text-anchor="middle" class="t-muted" font-size="12">facts only</text>
+        <rect x="200" y="30" width="170" height="56" rx="8" class="box-acc"/><text x="285" y="54" text-anchor="middle" font-weight="600">Clef-flash</text><text x="285" y="72" text-anchor="middle" class="t-muted" font-size="12">decides · ≤64 per call</text>
+        <rect x="410" y="30" width="150" height="56" rx="8" class="box-acc"/><text x="485" y="54" text-anchor="middle" font-weight="600">Clef 27B</text><text x="485" y="72" text-anchor="middle" class="t-muted" font-size="12">when 0.25–0.75</text>
+        <rect x="600" y="30" width="150" height="56" rx="8" class="box-warm"/><text x="675" y="54" text-anchor="middle" font-weight="600">User / moderator</text><text x="675" y="72" text-anchor="middle" class="t-muted" font-size="12">still unsure, risky</text>
+        <rect x="790" y="30" width="100" height="56" rx="8" class="box-ok"/><text x="840" y="62" text-anchor="middle" font-weight="600">Act</text>
+        <rect x="200" y="112" width="360" height="44" rx="8" class="box"/><text x="380" y="138" text-anchor="middle" class="t-muted">LLM verifier: 5 % sample + escalations · flags, never decides</text>
+      </g>
+      <g class="edge">
+        <path d="M160,58 L200,58" marker-end="url(#ah6)"/><path d="M370,58 L410,58" marker-end="url(#ah6)"/><path d="M560,58 L600,58" marker-end="url(#ah6)"/><path d="M750,58 L790,58" marker-end="url(#ah6)"/>
+        <path d="M285,30 C285,6 840,6 840,28" marker-end="url(#ah6)"/>
+        <path d="M380,112 L380,90" stroke-dasharray="4 4"/>
+      </g>
+      <text x="560" y="14" text-anchor="middle" class="t-muted" font-size="11">confident</text>
+    </svg>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>Decision point</th><th>Type</th><th>Options</th></tr></thead>
+    <tbody>
+      <tr><td class="m">req.kind</td><td>choice</td><td>api / asset / tracking / auth / other</td></tr>
+      <tr><td class="m">form.kind</td><td>choice</td><td>search / filter / login / signup / checkout / contact / comment / subscribe / other</td></tr>
+      <tr><td class="m">tool.effect</td><td>choice</td><td>read / write / payment / destructive</td></tr>
+      <tr><td class="m">param.role</td><td>choice</td><td>query text / page / page size / sort / filter / id / token / tracking</td></tr>
+      <tr><td class="m">link.next</td><td>score</td><td>ranks links inside depth 2</td></tr>
+      <tr><td class="m">tool.pick</td><td>choice</td><td>which site tool fits the task text</td></tr>
+      <tr><td class="m">sub.class</td><td>choice</td><td>confirmation / correction / drift / extension / cosmetic / alternative / regression / risky</td></tr>
+      <tr><td class="m">sub.human</td><td>noul</td><td>moderator must review</td></tr>
+    </tbody>
+  </table></div>
+  <p>Full catalog of 17 decision points: PLAN.md §3.5.</p>
+</section>
+
+<section id="capture">
+  <span class="eyebrow">Exploration · depth 2</span>
+  <h2>DevTools-style capture</h2>
+  <p>The explorer drives headless Chromium over the Chrome DevTools Protocol and reads the same data as the DevTools panels, at most 2 link hops from the submitted URL.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Panel</th><th>CDP source</th><th>mcpit takes</th></tr></thead>
+    <tbody>
+      <tr><td>Elements</td><td><code>DOMSnapshot</code>, accessibility tree</td><td>Forms, inputs, options, buttons, search boxes, links</td></tr>
+      <tr><td>Network</td><td><code>Network.*</code> events, response bodies</td><td>URL, method, type, MIME, status, preview, initiator</td></tr>
+      <tr><td>Sources</td><td><code>Debugger.scriptParsed</code></td><td><code>fetch(</code> and GraphQL strings no click reaches</td></tr>
+      <tr><td>Application</td><td>Cookie and storage names</td><td>Whether a call needs a session</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tw"><table>
+    <thead><tr><th>req.kind test · 16 requests, 1 call</th><th>Correct</th><th>Median per call</th></tr></thead>
+    <tbody>
+      <tr><td class="m">clef-flash</td><td>16/16</td><td>929 ms (≈ 58 ms per request)</td></tr>
+      <tr><td class="m">clef</td><td>16/16</td><td>1,371 ms</td></tr>
+    </tbody>
+  </table></div>
+  <p>Hard cases included Next.js data JSON, GraphQL POST, i18n JSON, feature flags, Sentry and Segment calls, and a bot-check script.</p>
+</section>
+
 <section id="screener">
   <span class="eyebrow">Gate · models</span>
   <h2>Screening agent and models</h2>
@@ -305,7 +367,7 @@ footer{color:var(--muted);font-size:.9rem}
       <tr><td>Facts</td><td>Rules</td><td>Always first: fingerprint changed, new domain, write effect, removed tools.</td></tr>
       <tr><td>Decision (jev-like)</td><td><code>@cf/cloudflare/clef-flash</code></td><td>Every screening question. Typed answers with probabilities.</td></tr>
       <tr><td>Second opinion</td><td><code>@cf/cloudflare/clef</code></td><td>Flash is unsure (0.25–0.75) or the change is risky.</td></tr>
-      <tr><td>LLM judge</td><td>BYOK; default <code>@cf/deepseek-ai/deepseek-v4-flash-0731</code></td><td>Rules and Clef disagree, a new site, or a reason for the log.</td></tr>
+      <tr><td>LLM verifier</td><td>BYOK; default <code>@cf/deepseek-ai/deepseek-v4-flash-0731</code></td><td>Checks a 5 % sample and every escalated case; writes the moderator summary. Never decides.</td></tr>
       <tr><td>Optional</td><td>Local jev via external screener</td><td>Same System One API; counts as one more vote.</td></tr>
     </tbody>
   </table></div>
@@ -335,7 +397,7 @@ footer{color:var(--muted);font-size:.9rem}
       <tr><td class="m">M0</td><td>Monorepo, sitepack schema v1, park extension in <code>legacy/</code></td><td>CI builds and lints all packages</td></tr>
       <tr><td class="m">M1</td><td>Core + CLI + MCP server: native detection, explore, HTTP/headless executors, local store</td><td>10 public sites; repeat ≥ 10× faster; works from Claude Code</td></tr>
       <tr><td class="m">M2</td><td>Registry core: submit, hash, duplicate rules, static scan, tool diff, states, signed pull</td><td>Repeated-submit tests pass; pull-then-call on a clean machine</td></tr>
-      <tr><td class="m">M3</td><td>Screening agent (Agents SDK): rules, replay, Clef questions, BYOK LLM judge, classes, per-tool promotion</td><td>Test set of fixes, drifts, regressions, poisoned packs classified right</td></tr>
+      <tr><td class="m">M3</td><td>Screening agent (Agents SDK): rules, replay, Clef decision points, BYOK LLM verifier, classes, per-tool promotion</td><td>Test set of fixes, drifts, regressions, poisoned packs classified right</td></tr>
       <tr><td class="m">M4</td><td>Console: settings, quarantine, audit + public dashboard</td><td>Moderator runs the full flow; ranks from real counters</td></tr>
       <tr><td class="m">M5</td><td>Client decision engine (Clef or local jev); <code>mcpit login</code>; history import; idle batch</td><td>Benchmark of time saved with the decision model; 50 sites in idle time</td></tr>
       <tr><td class="m">M6</td><td>Public launch: npm, registry URL, docs</td><td>Public URL live</td></tr>

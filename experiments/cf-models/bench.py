@@ -5,7 +5,7 @@ on mcpit registry screening questions with known answers.
 Auth: the cf CLI OAuth token (~/.config/cloudflare/config/default.json) or CLOUDFLARE_API_TOKEN.
 Usage: python3 bench.py [--runs 3] [--out results.json]
 """
-import argparse, json, os, re, statistics, time, urllib.request
+import argparse, json, os, re, statistics, subprocess, time, urllib.error, urllib.request
 
 ACCOUNT = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "5dad3314e49aaa2cde5dc0f5cf43b785")
 CF_CONFIG = os.path.expanduser("~/.config/cloudflare/config/default.json")
@@ -98,8 +98,17 @@ def run(model, body):
         data=json.dumps(body).encode(), method="POST",
         headers={"Authorization": f"Bearer {token()}", "Content-Type": "application/json"})
     t0 = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=120) as r:
-        out = json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            out = json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code != 401 or os.environ.get("CLOUDFLARE_API_TOKEN"):
+            raise
+        subprocess.run(["cf", "auth", "whoami"], capture_output=True)  # refreshes the OAuth token
+        req.headers["Authorization"] = f"Bearer {token()}"
+        t0 = time.perf_counter()
+        with urllib.request.urlopen(req, timeout=120) as r:
+            out = json.load(r)
     return out.get("result", out), (time.perf_counter() - t0) * 1000
 
 
