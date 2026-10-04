@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -243,4 +244,26 @@ func (a *App) Submit(ctx context.Context, site string) (*registry.Submission, er
 	}
 	c.Provenance.Submitter = a.Registry.Key.ID
 	return a.Registry.Submit(ctx, &c)
+}
+
+// EnsureKey creates and registers a device key if there is none (keys are approved
+// automatically by the registry, within its per-network limit).
+func (a *App) EnsureKey(ctx context.Context) error {
+	if a.Registry.Key != nil {
+		return nil
+	}
+	k, _, err := registry.InitKey(config.Dir())
+	if err != nil {
+		return err
+	}
+	a.Registry.Key = k
+	host, _ := os.Hostname()
+	st, err := a.Registry.Register(ctx, "mcpit@"+host)
+	if err != nil {
+		return fmt.Errorf("device key registration failed: %w", err)
+	}
+	if st.State != "approved" {
+		return fmt.Errorf("device key %s is %s: a moderator must approve it", k.ID, st.State)
+	}
+	return nil
 }

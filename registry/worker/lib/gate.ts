@@ -30,6 +30,8 @@ export interface ReplayResult {
   status: number; // 0 = network error / blocked
   ok: boolean;
   skipped?: string; // why no replay ran
+  preview?: string; // readable start of the response
+  notData?: boolean; // resp.data said: error, captcha or browser check
 }
 
 /** Answers from the decision model for one tool (probabilities 0..1). */
@@ -90,7 +92,14 @@ export function decideTool(g: GateInput): ToolResult {
   const canReplay = !cand.skipped;
 
   if (d.change === 'added') {
-    if (canReplay && !cand.ok) return r('reject', 'regression', `test call failed (HTTP ${cand.status || 'error'})`);
+    if (canReplay && !cand.ok)
+      return r(
+        'reject',
+        'regression',
+        cand.notData
+          ? 'test call returned an error or browser-check page (resp.data)'
+          : `test call failed (HTTP ${cand.status || 'error'})`,
+      );
     if ((m.descMatch ?? 1) < low)
       return r('reject', 'cosmetic', `description does not match the endpoint (${fmt(m.descMatch)})`);
     if (unsure(m.descMatch, low, high) && !canReplay)
@@ -101,13 +110,19 @@ export function decideTool(g: GateInput): ToolResult {
   // changed
   const act = g.activeReplay;
   if (canReplay && !cand.ok)
-    return r('reject', 'regression', `candidate test call failed (HTTP ${cand.status || 'error'})`);
+    return r(
+      'reject',
+      'regression',
+      cand.notData
+        ? 'candidate returned an error or browser-check page (resp.data)'
+        : `candidate test call failed (HTTP ${cand.status || 'error'})`,
+    );
   if (act && !act.skipped && !act.ok && (!canReplay || cand.ok)) {
     const cls = g.fingerprintChanged ? 'drift' : 'correction';
     return r(
       'promote',
       cls,
-      `active tool fails (HTTP ${act.status || 'error'}); candidate ${canReplay ? 'passes' : 'is untested'}`,
+      `active tool fails (${act.notData ? 'browser-check or error page' : 'HTTP ' + (act.status || 'error')}); candidate ${canReplay ? 'passes' : (cand.skipped ?? 'is untested')}`,
     );
   }
   if (isCosmetic(d)) {

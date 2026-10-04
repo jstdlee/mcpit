@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/jstdlee/mcpit/cli/internal/browser"
 	"github.com/jstdlee/mcpit/cli/internal/sitepack"
 )
 
@@ -24,6 +25,8 @@ type Options struct {
 	// Confirmed must be true to call a write, payment or destructive tool.
 	Confirmed bool
 	MaxChars  int
+	// NoBrowser forbids the headless executor (tests, servers without Chrome).
+	NoBrowser bool
 }
 
 type Result struct {
@@ -117,6 +120,18 @@ func Call(ctx context.Context, client *http.Client, origin string, t *sitepack.T
 		}
 	}
 	u.RawQuery = q.Encode()
+	if UsesBrowser(t) && t.Request.Method == "GET" && !o.NoBrowser {
+		// The site answers plain HTTP with a browser check: load the page in headless Chrome.
+		pg, err := browser.Fetch(ctx, u.String())
+		if err != nil {
+			return nil, fmt.Errorf("headless browser: %w", err)
+		}
+		r := &Result{URL: pg.URL, Status: pg.Status, ContentType: "text/html (headless)", Text: pg.Text, Untrusted: true}
+		if len(r.Text) > o.MaxChars {
+			r.Text, r.Truncated = r.Text[:o.MaxChars], true
+		}
+		return r, nil
+	}
 	req, err := http.NewRequestWithContext(ctx, t.Request.Method, u.String(), body)
 	if err != nil {
 		return nil, err
@@ -156,6 +171,11 @@ func Call(ctx context.Context, client *http.Client, origin string, t *sitepack.T
 		r.Text, r.Truncated = r.Text[:o.MaxChars], true
 	}
 	return r, nil
+}
+
+// UsesBrowser reports whether the tool must run in headless Chrome.
+func UsesBrowser(t *sitepack.Tool) bool {
+	return len(t.Executors) > 0 && t.Executors[0] == "headless"
 }
 
 func checkArgs(t *sitepack.Tool, args map[string]any) error {

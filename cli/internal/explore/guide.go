@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net/url"
 	"regexp"
@@ -623,4 +624,99 @@ func attr(n *html.Node, k string) string {
 		}
 	}
 	return ""
+}
+
+// fromPageShapes turns families of pages that share a shape (/project/httpx/,
+// /project/requests/ …) into read tools: GET /project/{name}/ returns the page text.
+// Members come from crawled pages and sitemap URLs.
+func (e *Explorer) fromPageShapes(pages []*PageResult, sitemap []string) []*candidate {
+	type member struct {
+		segs  []string
+		path  string
+		title string
+		slash bool
+	}
+	groups := map[string][]member{}
+	seen := map[string]bool{}
+	add := func(raw, title string) {
+		u, err := url.Parse(raw)
+		if err != nil || u.RawQuery != "" || !e.sameOrigin(raw) || !isPageURL(raw) || seen[u.Path] {
+			return
+		}
+		segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(segs) < 2 || segs[0] == "" {
+			return
+		}
+		seen[u.Path] = true
+		slash := strings.HasSuffix(u.Path, "/")
+		key := fmt.Sprintf("%s/%d/%t", segs[0], len(segs), slash)
+		groups[key] = append(groups[key], member{segs, u.Path, title, slash})
+	}
+	for _, p := range pages {
+		add(p.URL, p.Title)
+	}
+	for _, s := range sitemap {
+		add(s, "")
+	}
+	keys := make([]string, 0, len(groups))
+	for k, g := range groups {
+		if len(g) >= 2 {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool { return len(groups[keys[i]]) > len(groups[keys[j]]) })
+	var out []*candidate
+	for _, k := range keys {
+		if len(out) >= 6 {
+			break
+		}
+		g := groups[k]
+		first := g[0]
+		var vary []int
+		for i := 1; i < len(first.segs); i++ {
+			for _, m := range g[1:] {
+				if m.segs[i] != first.segs[i] {
+					vary = append(vary, i)
+					break
+				}
+			}
+		}
+		if len(vary) == 0 || len(vary) > 2 {
+			continue
+		}
+		tpl := append([]string(nil), first.segs...)
+		c := &candidate{source: "page", observed: len(g), effectFact: "read"}
+		var names []string
+		for n, i := range vary {
+			vals := []string{}
+			for _, m := range g {
+				vals = appendUnique(vals, m.segs[i])
+			}
+			name := "name"
+			if allNumeric(vals) {
+				name = "id"
+			}
+			if n > 0 {
+				name += "2"
+			}
+			names = append(names, name)
+			tpl[i] = "{{" + name + "}}"
+			p := c.param(name)
+			p.in, p.roleFact, p.required, p.values = "path", "id", true, vals[:1]
+		}
+		path := "/" + strings.Join(tpl, "/")
+		if first.slash {
+			path += "/"
+		}
+		example := first.path
+		desc := fmt.Sprintf("Read a %s page by %s (example: %s", first.segs[0], strings.Join(names, " and "), example)
+		if first.title != "" {
+			desc += "; title: " + clip(first.title, 60)
+		}
+		desc += "); returns the page text."
+		c.tool = sitepack.Tool{ID: safeID(first.segs[0] + "_page"), Kind: "read", Auth: "none", Executors: []string{"http"},
+			Description: clip(desc, 300), Request: sitepack.Request{Method: "GET", URL: e.origin + path}, Output: sitepack.Output{Type: "html"}}
+		out = append(out, c)
+	}
+	return out
 }

@@ -16,12 +16,16 @@ mcpit turns a website into callable tools (its search, forms and APIs) and keeps
    (llms.txt, robots.txt, agent card, API catalog, feeds) and a site map (path, category, title).
 3. **Call** — `mcpit_tools` shows each tool's input schema; then call `mcpit_call` with
    `site`, `tool` and `args`. Prefer tools over opening pages in a browser.
-4. **No tools yet?** — call `mcpit_explore` with a page URL of the site. It starts a background
+4. **Tool says it failed or returns a "browser check" page?** Do not scrape around it with curl
+   first: call `mcpit_report`, then try another tool of the site (for example a `*_page` tool).
+5. **No tools yet?** — call `mcpit_explore` with a page URL of the site. It starts a background
    job and returns at once. Then call `mcpit_explore_status` with the site (about every 20 s, or
-   with `wait: true`) until `status` is `done`. An explore takes 30 s to a few minutes (headless
+   with `wait: true`, which waits up to 25 s) until `status` is `done`. An explore takes 30 s to a few minutes (headless
    Chrome, at most 2 link hops). Later calls are fast. Do not start the CLI explore in parallel.
-5. **Share** — only when the user agrees, call `mcpit_submit`. It shares the site's structure
-   (endpoints, parameters, guide), never the user's data. The registry reviews it.
+6. **Share** — only when the user agrees, call `mcpit_submit`. It shares the site's structure
+   (endpoints, parameters, guide), never the user's data. The registry reviews it. If your client
+   cannot show a confirmation, pass `user_confirmed: true` — but only after the user said yes.
+   A device key is created and approved automatically on the first submit.
 
 ## Rules
 

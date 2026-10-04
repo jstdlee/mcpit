@@ -125,3 +125,18 @@ func TestGuideStandards(t *testing.T) {
 		t.Errorf("pages: %+v", pages)
 	}
 }
+
+func TestPageShapes(t *testing.T) {
+	e := New(&decide.Decider{}, Options{})
+	e.origin = "https://pypi.example"
+	pages := []*PageResult{{URL: "https://pypi.example/project/httpx/", Title: "httpx · PyPI"}, {URL: "https://pypi.example/help/"}}
+	sitemap := []string{"https://pypi.example/project/requests/", "https://pypi.example/project/flask/", "https://pypi.example/user/alice/", "https://other.example/project/x/"}
+	cs := e.fromPageShapes(pages, sitemap)
+	if len(cs) != 1 {
+		t.Fatalf("want 1 page tool (project), got %d", len(cs))
+	}
+	c := cs[0]
+	if c.tool.ID != "project_page" || c.tool.Request.URL != "https://pypi.example/project/{{name}}/" || c.param("name").values[0] != "httpx" {
+		t.Fatalf("tool: %+v", c.tool)
+	}
+}

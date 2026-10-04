@@ -53,7 +53,8 @@ type GuideIn struct {
 }
 
 type SubmitIn struct {
-	Site string `json:"site" jsonschema:"site whose local sitepack to submit to the shared registry"`
+	Site          string `json:"site" jsonschema:"site whose local sitepack to submit to the shared registry"`
+	UserConfirmed bool   `json:"user_confirmed,omitempty" jsonschema:"set true only if the user said yes to sharing this site's structure in this conversation (used when the client cannot show a confirmation)"`
 }
 
 type ReportIn struct {
@@ -204,10 +205,19 @@ func New(a *app.App) *mcp.Server {
 		func(ctx context.Context, req *mcp.CallToolRequest, in SubmitIn) (*mcp.CallToolResult, any, error) {
 			ok, err := confirm(ctx, req, "Share the structure of "+in.Site+" (endpoints and parameters, no personal data) in the public mcpit registry?")
 			if err != nil {
-				return text("Refused: your client cannot ask the user to confirm. Run `mcpit submit` in a terminal instead."), nil, nil
+				// No elicitation in this client: accept the user's consent given in the chat.
+				if !in.UserConfirmed {
+					return text("This client cannot show a confirmation. Ask the user whether to share the structure of " + in.Site + " (endpoints, parameters, guide; never personal data) with the public mcpit registry. If the user says yes, call mcpit_submit again with user_confirmed: true."), nil, nil
+				}
+				ok = true
 			}
 			if !ok {
 				return text("The user declined the submit."), nil, nil
+			}
+			if a.Registry.Key == nil {
+				if err := a.EnsureKey(ctx); err != nil {
+					return text("Submit failed: " + err.Error()), nil, nil
+				}
 			}
 			sub, err := a.Submit(ctx, in.Site)
 			if err != nil {

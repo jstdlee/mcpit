@@ -140,6 +140,28 @@ describe('promotion rules', () => {
       decideTool(gate({ diff: d, activeReplay: { status: 404, ok: false }, fingerprintChanged: true })).class,
     ).toBe('drift');
   });
+  it('treats a browser-check page as a failed test call', () => {
+    const d = {
+      id: 'search',
+      change: 'changed' as const,
+      candidate: tool({ executors: ['headless'] }),
+      active: tool(),
+    };
+    const r = decideTool(
+      gate({
+        diff: d,
+        candidateReplay: { status: 0, ok: false, skipped: 'browser-only tool' },
+        activeReplay: { status: 200, ok: false, notData: true },
+      }),
+    );
+    expect([r.verdict, r.class]).toEqual(['promote', 'correction']);
+    expect(r.reason).toContain('browser-check');
+    const added = decideTool(gate({ candidateReplay: { status: 200, ok: false, notData: true } }));
+    expect([added.verdict, added.reason]).toEqual([
+      'reject',
+      'test call returned an error or browser-check page (resp.data)',
+    ]);
+  });
   it('rejects a regression and keeps alternatives', () => {
     const d = {
       id: 'search_api',
@@ -216,7 +238,14 @@ describe('replay', () => {
       seen.push(url);
       return new Response('{}', { status: url.includes('q=test') ? 200 : 400 });
     }) as unknown as typeof fetch;
-    expect(await replay('https://shop.example.com', tool(), fake)).toEqual({ status: 200, ok: true });
+    expect(await replay('https://shop.example.com', tool(), fake)).toMatchObject({
+      status: 200,
+      ok: true,
+      preview: '{}',
+    });
+    expect((await replay('https://shop.example.com', tool({ executors: ['headless'] }), fake)).skipped).toBe(
+      'browser-only tool',
+    );
     expect(seen[0]).toBe('https://shop.example.com/api/search?q=test');
     expect((await replay('https://shop.example.com', tool({ effect: 'write' }), fake)).skipped).toBe('not a read tool');
     const off = await replay(

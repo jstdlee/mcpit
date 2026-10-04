@@ -61,8 +61,8 @@ export async function replay(
       }
     }
     const res = await timed(fetcher, url.toString(), init, timeoutMs);
-    await res.arrayBuffer();
-    return { status: res.status, ok: res.status === (t.probe.expect?.status ?? 200) };
+    const body = await res.text();
+    return { status: res.status, ok: res.status === (t.probe.expect?.status ?? 200), preview: previewOf(body) };
   } catch (e) {
     return { status: 0, ok: false, skipped: /blocked|refused/.test(String(e)) ? String(e) : undefined };
   }
@@ -89,4 +89,12 @@ async function timed(fetcher: typeof fetch, url: string, init: RequestInit, ms: 
 
 function escapeRe(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** previewOf keeps the readable start of a response for the resp.data decision. */
+export function previewOf(body: string): string {
+  const t = body.trimStart().startsWith('<')
+    ? body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ')
+    : body;
+  return t.replace(/\s+/g, ' ').trim().slice(0, 1200);
 }

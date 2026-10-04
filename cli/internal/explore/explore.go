@@ -150,6 +150,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 		}
 	}
 
+	cands = append(cands, e.fromPageShapes(pages, e.sitemap)...)
 	cands = dedupe(cands)
 	e.applyExamples(cands)
 	cands = e.decideUseful(ctx, cands)
@@ -645,7 +646,7 @@ func dedupe(cands []*candidate) []*candidate {
 }
 
 func rank(src string) int {
-	return map[string]int{"form": 1, "guide": 2, "network": 3, "opensearch": 4, "openapi": 5}[src]
+	return map[string]int{"page": 0, "form": 1, "guide": 2, "network": 3, "opensearch": 4, "openapi": 5}[src]
 }
 
 func graphqlOpFromBody(b any) string {
@@ -679,14 +680,29 @@ func (e *Explorer) verify(ctx context.Context, origin string, tools []sitepack.T
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			ok := 0
+			var preview string
 			for k := 0; k < 2; k++ {
-				r, err := execute.Call(ctx, e.HTTP, origin, t, t.Probe.Args, execute.Options{})
+				r, err := execute.Call(ctx, e.HTTP, origin, t, t.Probe.Args, execute.Options{NoBrowser: true})
 				if err == nil && r.Status == t.Probe.Expect.Status {
 					ok++
+					preview = resultPreview(r)
+				}
+			}
+			// A 200 can still be a browser check or an error page: decision point resp.data.
+			via := "http"
+			if ok > 0 && !e.isData(ctx, t, preview) {
+				ok = 0
+				if t.Request.Method == "GET" && !e.Opts.NoBrowser {
+					hl := *t
+					hl.Executors = []string{"headless"}
+					if r, err := execute.Call(ctx, e.HTTP, origin, &hl, t.Probe.Args, execute.Options{}); err == nil && e.isData(ctx, t, resultPreview(r)) {
+						t.Executors = []string{"headless"}
+						ok, via = 1, "headless browser (plain HTTP got a browser check)"
+					}
 				}
 			}
 			mu.Lock()
-			e.say("verify %s: %d/2", t.ID, ok)
+			e.say("verify %s: %d/2 via %s", t.ID, ok, via)
 			mu.Unlock()
 			if ok == 0 {
 				t.Probe = nil
@@ -698,6 +714,35 @@ func (e *Explorer) verify(ctx context.Context, origin string, tools []sitepack.T
 	}
 	wg.Wait()
 	return out
+}
+
+func resultPreview(r *execute.Result) string {
+	if r == nil {
+		return ""
+	}
+	if r.Data != nil {
+		b, _ := json.Marshal(r.Data)
+		return clip(string(b), 1200)
+	}
+	return clip(strings.Join(strings.Fields(r.Text), " "), 1200)
+}
+
+var blockedPage = regexp.MustCompile(`(?i)(enable javascript|javascript is disabled|just a moment|checking (if|your) (the site|browser)|captcha|access denied|client challenge|are you a robot|not found|404)`)
+
+// isData decides resp.data: is this the real content, not an error, captcha or browser check?
+func (e *Explorer) isData(ctx context.Context, t *sitepack.Tool, preview string) bool {
+	if strings.TrimSpace(preview) == "" {
+		return false
+	}
+	if e.D.Available() {
+		ans, err := e.D.Ask(ctx, "resp.data", map[string]any{"request": t.Request.Method + " " + t.Request.URL, "response": preview},
+			map[string]decide.Question{"x": decide.Noul("This response is the real content or data the request asked for, not an error, captcha, login wall or browser check page.")},
+			map[string]string{"x": t.ID})
+		if err == nil {
+			return ans["x"].Noul >= 0.5
+		}
+	}
+	return !blockedPage.MatchString(clip(preview, 400))
 }
 
 func fingerprint(pages []*PageResult, tools []sitepack.Tool) sitepack.Fingerprint {
