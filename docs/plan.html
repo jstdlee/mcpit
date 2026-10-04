@@ -102,7 +102,7 @@ footer{color:var(--muted);font-size:.9rem}
     <li>The Chrome extension is out of scope for now: users may not trust it, and it explores APIs and forms poorly. It moves to <code>legacy/extension/</code>.</li>
     <li>The scope is the MCP server, the CLI and, most important, the registry.</li>
     <li>Sites behind a login use <code>mcpit login</code>: a visible browser opens once, with an mcpit-only profile. Later runs use it headless, and cookies stay local.</li>
-    <li>The registry owns versions, validation, repeated submits, update decisions, the jev + screening gate and the service settings.</li>
+    <li>The registry owns versions, validation, repeated submits, update decisions, the screening gate (rules + Clef) and the service settings.</li>
   </ul>
 </section>
 
@@ -155,13 +155,13 @@ footer{color:var(--muted);font-size:.9rem}
       <rect x="466" y="66" width="150" height="40" rx="6" class="box"/><text x="541" y="91" text-anchor="middle" font-size="13">Submit API · intake</text>
       <rect x="624" y="66" width="150" height="40" rx="6" class="box"/><text x="699" y="91" text-anchor="middle" font-size="13">Versions (D1 + R2)</text>
       <rect x="466" y="114" width="150" height="40" rx="6" class="box"/><text x="541" y="139" text-anchor="middle" font-size="13">Static scan · diff</text>
-      <rect x="624" y="114" width="150" height="40" rx="6" class="box"/><text x="699" y="139" text-anchor="middle" font-size="13">Screening queue</text>
+      <rect x="624" y="114" width="150" height="40" rx="6" class="box"/><text x="699" y="139" text-anchor="middle" font-size="13">Screening agent</text>
       <rect x="466" y="162" width="150" height="52" rx="6" class="box"/><text x="541" y="185" text-anchor="middle" font-size="13">Console</text><text x="541" y="202" text-anchor="middle" class="t-muted" font-size="11">settings · dashboard</text>
       <rect x="624" y="162" width="150" height="52" rx="6" class="box"/><text x="699" y="185" text-anchor="middle" font-size="13">Signer · audit log</text><text x="699" y="202" text-anchor="middle" class="t-muted" font-size="11">immutable versions</text>
       <path d="M380,150 L450,110" class="edge" marker-end="url(#ah2)"/><text x="415" y="120" text-anchor="middle" class="t-muted" font-size="11">pull/submit</text>
 
       <text x="620" y="252" text-anchor="middle" class="t-muted t-mono" font-size="11">ANYWHERE (OPERATOR, SPONSOR)</text>
-      <rect x="450" y="260" width="340" height="34" rx="8" class="box-acc"/><text x="620" y="282" text-anchor="middle" font-weight="600" font-size="14">Screener · jev + BYOK LLM + replay</text>
+      <rect x="450" y="260" width="340" height="34" rx="8" class="box-acc"/><text x="620" y="282" text-anchor="middle" font-weight="600" font-size="14">External screener (optional) · local jev + headless replay</text>
       <path d="M699,154 C830,170 830,270 790,277" class="edge" marker-end="url(#ah2)"/><text x="852" y="215" text-anchor="middle" class="t-muted" font-size="11">tasks ⇄ results</text>
     </svg>
   </div>
@@ -180,7 +180,7 @@ footer{color:var(--muted);font-size:.9rem}
     <button type="button" id="s-poison" aria-pressed="false" data-s="poison">Sends data to another domain</button>
   </div>
   <div class="fig">
-    <svg viewBox="0 0 900 230" role="img" aria-label="Submit pipeline: intake, canonicalize, duplicate check, static scan, diff, queue, screening (replay, jev, LLM), decision">
+    <svg viewBox="0 0 900 230" role="img" aria-label="Submit pipeline: intake, canonicalize, duplicate check, static scan, diff, queue, screening (rules, replay, Clef, LLM), decision">
       <defs><marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
       <text x="300" y="16" text-anchor="middle" class="t-muted t-mono" font-size="11">SYNC · AT SUBMIT</text>
       <text x="745" y="16" text-anchor="middle" class="t-muted t-mono" font-size="11">ASYNC · SCREENER</text>
@@ -191,7 +191,7 @@ footer{color:var(--muted);font-size:.9rem}
         <g class="step" data-k="scan"><rect x="310" y="28" width="90" height="56" rx="7" class="box"/><text x="355" y="52" text-anchor="middle">4 scan</text><text x="355" y="70" text-anchor="middle" class="t-muted" font-size="11">origin · secrets</text></g>
         <g class="step" data-k="diff"><rect x="410" y="28" width="90" height="56" rx="7" class="box"/><text x="455" y="52" text-anchor="middle">5 diff</text><text x="455" y="70" text-anchor="middle" class="t-muted" font-size="11">per tool</text></g>
         <g class="step" data-k="queue"><rect x="510" y="28" width="90" height="56" rx="7" class="box"/><text x="555" y="52" text-anchor="middle">6 queue</text><text x="555" y="70" text-anchor="middle" class="t-muted" font-size="11">validated</text></g>
-        <g class="step" data-k="screen"><rect x="620" y="28" width="250" height="56" rx="7" class="box-acc"/><text x="745" y="50" text-anchor="middle" font-weight="600">7 screening</text><text x="745" y="70" text-anchor="middle" class="t-muted" font-size="11">replay probes → jev questions → LLM judge if unsure</text></g>
+        <g class="step" data-k="screen"><rect x="620" y="28" width="250" height="56" rx="7" class="box-acc"/><text x="745" y="50" text-anchor="middle" font-weight="600">7 screening</text><text x="745" y="70" text-anchor="middle" class="t-muted" font-size="11">rules → replay → Clef questions → LLM if unsure</text></g>
       </g>
       <g class="edge"><path d="M100,56 L110,56" marker-end="url(#ah4)"/><path d="M200,56 L210,56" marker-end="url(#ah4)"/><path d="M300,56 L310,56" marker-end="url(#ah4)"/><path d="M400,56 L410,56" marker-end="url(#ah4)"/><path d="M500,56 L510,56" marker-end="url(#ah4)"/><path d="M600,56 L620,56" marker-end="url(#ah4)"/></g>
       <g font-size="13">
@@ -202,7 +202,7 @@ footer{color:var(--muted);font-size:.9rem}
         <g class="step" data-k="o-quar"><rect x="700" y="140" width="110" height="50" rx="7" class="box-warm"/><text x="755" y="161" text-anchor="middle">quarantine</text><text x="755" y="178" text-anchor="middle" class="t-muted" font-size="11">moderator</text><path d="M755,84 L755,140" class="edge" marker-end="url(#ah4)"/></g>
         <g class="step" data-k="o-rej2"><rect x="440" y="140" width="110" height="50" rx="7" class="box-bad"/><text x="495" y="161" text-anchor="middle">rejected</text><text x="495" y="178" text-anchor="middle" class="t-muted" font-size="11">regression</text><path d="M660,84 L505,140" class="edge" marker-end="url(#ah4)"/></g>
       </g>
-      <text x="450" y="218" text-anchor="middle" class="t-muted" font-size="12">jev ranks and flags; it never approves a write, payment or new-domain change alone</text>
+      <text x="450" y="218" text-anchor="middle" class="t-muted" font-size="12">Clef ranks and flags; rules send every write, payment or new-domain change to the moderator</text>
     </svg>
   </div>
   <div class="outcome" aria-live="polite"><span class="chip" id="out-chip"></span><span id="out-text"></span></div>
@@ -219,14 +219,14 @@ footer{color:var(--muted);font-size:.9rem}
       <tr><td>Correction</td><td>Active probe fails or has failure reports; candidate passes</td><td><span class="chip ok">promote tool</span></td></tr>
       <tr><td>Drift update</td><td>Site fingerprint changed; candidate matches the new site</td><td><span class="chip ok">promote tool</span></td></tr>
       <tr><td>Extension</td><td>New read tools; existing tools unchanged and pass</td><td><span class="chip ok">promote new tools</span></td></tr>
-      <tr><td>Cosmetic</td><td>Only description or names differ</td><td><span class="chip">promote if jev/LLM say it fits better</span></td></tr>
+      <tr><td>Cosmetic</td><td>Only description or names differ</td><td><span class="chip">promote if Clef/LLM say it fits better</span></td></tr>
       <tr><td>Alternative</td><td>Both pass; other endpoint or flow</td><td><span class="chip">keep; agreement and success decide</span></td></tr>
       <tr><td>Regression</td><td>Removes passing tools, a probe fails, worse output</td><td><span class="chip bad">reject</span></td></tr>
       <tr><td>Risky</td><td>Wider effect, new domain, new auth, new write tool</td><td><span class="chip warm">quarantine</span></td></tr>
     </tbody>
   </table></div>
   <div class="formula">score = 0.35·replay_pass + 0.20·agreement + 0.15·field_success_rate
-      + 0.10·jev_score + 0.10·llm_score + 0.10·submitter_reputation</div>
+      + 0.10·clef_score + 0.10·llm_score + 0.10·submitter_reputation</div>
 </section>
 
 <section id="repeat">
@@ -291,7 +291,7 @@ footer{color:var(--muted);font-size:.9rem}
     <div class="panel"><h3>Owner claim</h3><p>DNS TXT or <code>/.well-known/mcpit.json</code>. Owner packs rank first; owners can opt out.</p></div>
     <div class="panel"><h3>Screening</h3><p>Clef-flash/Clef thresholds, BYOK LLM key and model, external screener tokens, daily budget, required agreement, auto-promote limits per class.</p></div>
     <div class="panel"><h3>Device keys</h3><p>No accounts. Each new key waits for review: fingerprint, first submit preview, AI assistant note. Approve, reject, revoke.</p></div>
-    <div class="panel"><h3>Quarantine queue</h3><p>Diff view, replay results, jev and LLM reasons. Approve or reject.</p></div>
+    <div class="panel"><h3>Quarantine queue</h3><p>Diff view, replay results, Clef and LLM reasons. Approve or reject.</p></div>
   </div>
 </section>
 
@@ -337,7 +337,7 @@ footer{color:var(--muted);font-size:.9rem}
       <tr><td class="m">M2</td><td>Registry core: submit, hash, duplicate rules, static scan, tool diff, states, signed pull</td><td>Repeated-submit tests pass; pull-then-call on a clean machine</td></tr>
       <tr><td class="m">M3</td><td>Screening agent (Agents SDK): rules, replay, Clef questions, BYOK LLM judge, classes, per-tool promotion</td><td>Test set of fixes, drifts, regressions, poisoned packs classified right</td></tr>
       <tr><td class="m">M4</td><td>Console: settings, quarantine, audit + public dashboard</td><td>Moderator runs the full flow; ranks from real counters</td></tr>
-      <tr><td class="m">M5</td><td>Client decision engine with jev; <code>mcpit login</code>; history import; idle batch</td><td>Benchmark of time saved with jev; 50 sites in idle time</td></tr>
+      <tr><td class="m">M5</td><td>Client decision engine (Clef or local jev); <code>mcpit login</code>; history import; idle batch</td><td>Benchmark of time saved with the decision model; 50 sites in idle time</td></tr>
       <tr><td class="m">M6</td><td>Public launch: npm, registry URL, docs</td><td>Public URL live</td></tr>
       <tr><td class="m">M7</td><td>Multi-screener agreement, fuzz and red-team tests</td><td>Red-team set passes</td></tr>
     </tbody>
@@ -383,9 +383,9 @@ footer{color:var(--muted);font-size:.9rem}
   const sc = {
     dup:     { on: ['intake','canon','dup','o-idem'], chip: ['idempotent',''], text: 'Same hash, same account: the registry returns the existing submission ID. Nothing new is stored.' },
     confirm: { on: ['intake','canon','dup','o-conf'], chip: ['confirmation','ok'], text: 'Same hash, other unlinked account: +1 independent agreement. The version gains trust.' },
-    fix:     { on: ['intake','canon','dup','scan','diff','queue','screen','o-promote'], chip: ['promoted','ok'], text: 'The active probe fails; the candidate probe passes; jev agrees the change fixes the tool. Only that tool gets a new revision.' },
+    fix:     { on: ['intake','canon','dup','scan','diff','queue','screen','o-promote'], chip: ['promoted','ok'], text: 'The active probe fails; the candidate probe passes; Clef agrees the change is an improvement (0.99). Only that tool gets a new revision.' },
     reg:     { on: ['intake','canon','dup','scan','diff','queue','screen','o-rej2'], chip: ['rejected','bad'], text: 'The candidate removes a passing tool and its probe fails on replay. The active version stays.' },
-    risky:   { on: ['intake','canon','dup','scan','diff','queue','screen','o-quar'], chip: ['quarantined','warm'], text: 'A new write tool is a risky change. jev cannot approve it alone, so it waits for a moderator.' },
+    risky:   { on: ['intake','canon','dup','scan','diff','queue','screen','o-quar'], chip: ['quarantined','warm'], text: 'A new write tool is a risky change. Rules send it to the moderator; the AI assistant prepares the review.' },
     poison:  { on: ['intake','canon','dup','scan','o-rej'], chip: ['rejected','bad'], text: 'The static scan finds a request to a domain that is not the site (origin rule). Rejected at submit, before any screening cost.' }
   };
   const steps = document.querySelectorAll('#pipeline .step');
