@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -31,6 +32,7 @@ type FindIn struct {
 
 type ToolsIn struct {
 	Site string `json:"site" jsonschema:"URL, origin or domain of the site"`
+	Wait bool   `json:"wait,omitempty" jsonschema:"mcpit_explore_status only: wait up to 25 s for the job to end"`
 }
 
 type CallIn struct {
@@ -40,6 +42,7 @@ type CallIn struct {
 }
 
 type ExploreIn struct {
+	Wait     bool   `json:"wait,omitempty" jsonschema:"block until the explore ends (only for clients with long tool timeouts)"`
 	URL      string `json:"url" jsonschema:"page to start from"`
 	Depth    int    `json:"depth,omitempty" jsonschema:"link hops from the URL, 0 to 2 (default 2)"`
 	MaxPages int    `json:"maxPages,omitempty" jsonschema:"page budget (default 15)"`
@@ -62,6 +65,7 @@ type ReportIn struct {
 func New(a *app.App) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "mcpit", Version: "0.1.0"}, &mcp.ServerOptions{Instructions: instructions})
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	jb := newJobs(a)
 	f := false
 
 	mcp.AddTool(s, &mcp.Tool{Name: "mcpit_find", Annotations: ro,
@@ -77,6 +81,9 @@ func New(a *app.App) *mcp.Server {
 					lines = append(lines, fmt.Sprintf("%s (%d tools)", p.Origin, len(p.Tools)))
 				}
 				return text("Sites in the local store:\n" + strings.Join(lines, "\n")), nil, nil
+			}
+			if j := jb.get(in.Site); j != nil && j.running() {
+				return jsonResult(j.view()), nil, nil
 			}
 			p, src, integ, err := checked(ctx, a, in.Site)
 			if err != nil {
@@ -156,17 +163,40 @@ func New(a *app.App) *mcp.Server {
 		})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "mcpit_explore",
-		Description: "Explore a site (slow: up to a few minutes) and save its tools locally. Visits at most 2 link hops from the URL."},
+		Description: "Explore a site and save its tools locally (at most 2 link hops; takes 30 s to a few minutes). It starts a background job and returns at once; then call mcpit_explore_status with the site until the job is done. Set wait=true only if your client allows long tool calls."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in ExploreIn) (*mcp.CallToolResult, any, error) {
 			depth := in.Depth
 			if depth == 0 {
 				depth = 2
 			}
-			p, err := a.Explore(ctx, in.URL, explore.Options{Depth: depth, MaxPages: in.MaxPages, Verify: true})
+			j, err := jb.start(in.URL, explore.Options{Depth: depth, MaxPages: in.MaxPages, Verify: true})
 			if err != nil {
 				return text("Explore failed: " + err.Error()), nil, nil
 			}
-			return jsonResult(map[string]any{"origin": p.Origin, "tools": summary(p), "next": "Call a tool with mcpit_call. Offer mcpit_submit to share the pack."}), nil, nil
+			if in.Wait {
+				select {
+				case <-j.done:
+				case <-ctx.Done():
+				}
+			}
+			return jsonResult(j.view()), nil, nil
+		})
+
+	mcp.AddTool(s, &mcp.Tool{Name: "mcpit_explore_status", Annotations: ro,
+		Description: "State of a site's explore job: running (with progress), done (with the tools) or failed. Wait about 20 seconds between checks."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in ToolsIn) (*mcp.CallToolResult, any, error) {
+			j := jb.get(in.Site)
+			if j == nil {
+				return text("No explore job for this site in this session. Start one with mcpit_explore."), nil, nil
+			}
+			if in.Wait {
+				select {
+				case <-j.done:
+				case <-time.After(25 * time.Second):
+				case <-ctx.Done():
+				}
+			}
+			return jsonResult(j.view()), nil, nil
 		})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "mcpit_submit",

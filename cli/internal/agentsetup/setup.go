@@ -24,13 +24,14 @@ type Agent struct {
 	MCPFile  func(scope, cwd, home string) string // JSON file with "mcpServers" (or "servers" for VS Code)
 	Key      string                               // top-level key of the server map
 	SkillDir func(scope, cwd, home string) string
-	Note     string // what to do when the file is not JSON we can edit
+	Note     string         // what to do when the file is not JSON we can edit
+	Extra    map[string]any // extra server fields (for example a longer request timeout)
 }
 
 func join(parts ...string) string { return filepath.Join(parts...) }
 
 var Agents = map[string]Agent{
-	"omp": {Name: "oh-my-pi (omp)", Key: "mcpServers",
+	"omp": {Name: "oh-my-pi (omp)", Key: "mcpServers", Extra: map[string]any{"timeout": 300000}, // ms; omp's default is 30 s
 		MCPFile: func(s, cwd, home string) string {
 			if s == "user" {
 				return join(home, ".omp", "agent", "mcp.json")
@@ -132,7 +133,11 @@ func Install(agent, scope, cwd, command string, env map[string]string, withSkill
 	if file == "" {
 		r.Manual = a.Note
 	} else {
-		if err := mergeServer(file, a.Key, Server(command, env)); err != nil {
+		srv := Server(command, env)
+		for k, v := range a.Extra {
+			srv[k] = v
+		}
+		if err := mergeServer(file, a.Key, srv); err != nil {
 			return nil, err
 		}
 		r.MCPFile = file
