@@ -59,7 +59,7 @@ func TestMCPTools(t *testing.T) {
 	for _, tl := range tools.Tools {
 		names[tl.Name] = true
 	}
-	for _, n := range []string{"mcpit_find", "mcpit_tools", "mcpit_call", "mcpit_explore", "mcpit_submit", "mcpit_report"} {
+	for _, n := range []string{"mcpit_find", "mcpit_tools", "mcpit_call", "mcpit_explore", "mcpit_submit", "mcpit_report", "mcpit_guide"} {
 		if !names[n] {
 			t.Errorf("missing tool %s", n)
 		}

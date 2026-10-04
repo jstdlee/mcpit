@@ -47,10 +47,11 @@ var paramRoleOptions = [][2]string{
 	{"size", "Page size or result limit."},
 	{"sort", "Sort field or order."},
 	{"filter", "A filter value such as category, color or price."},
+	{"location", "Latitude, longitude, an address or a place the user gives."},
 	{"id", "The id of one item."},
 	{"token", "A session, CSRF or anti-bot token."},
 	{"tracking", "Analytics or campaign tracking value."},
-	{"const", "A fixed client setting such as locale or version."},
+	{"const", "A fixed client setting that never comes from the user, such as an API version or client name."},
 }
 
 // assetTypes are CDP resource types that are facts, not decisions.
@@ -263,6 +264,9 @@ func (e *Explorer) decideParamRoles(ctx context.Context, cands []*candidate) {
 		if err == nil {
 			if a, ok := ans[id]; ok {
 				p.role = a.Choice
+				if p.role == "const" && p.variable {
+					p.role = "filter" // fact: the site's guide shows this parameter as user input
+				}
 				continue
 			}
 		}
@@ -368,7 +372,7 @@ func (e *Explorer) decideUseful(ctx context.Context, cands []*candidate) []*cand
 	subj := map[string]string{}
 	tools := map[string]any{}
 	for i, c := range cands {
-		if c.source == "openapi" || c.source == "opensearch" {
+		if c.source == "openapi" || c.source == "opensearch" || c.source == "guide" {
 			continue // declared by the site
 		}
 		if c.formKind != "" && c.formKind != "other" && c.formKind != "filter" {
@@ -396,4 +400,62 @@ func (e *Explorer) decideUseful(ctx context.Context, cands []*candidate) []*cand
 		out = append(out, c)
 	}
 	return out
+}
+
+var buttonKindOptions = [][2]string{
+	{"tab", "Switches a view, tab or search mode on the page."},
+	{"location", "Uses the user's location or finds things nearby."},
+	{"more", "Loads more results or the next page."},
+	{"search", "Runs a search with what was typed."},
+	{"ui", "Changes the look or language, opens a menu, or closes something."},
+	{"media", "Starts voice input, the camera, an upload or sharing."},
+	{"action", "Submits, sends, buys, deletes, signs in or changes data."},
+	{"other", "Anything else."},
+}
+
+// pickButtons decides button.kind for the buttons of a page and returns the ones that are
+// safe and useful to click while exploring: tab, location, more and search.
+func (e *Explorer) pickButtons(ctx context.Context, page string, buttons []Button) []string {
+	if len(buttons) == 0 {
+		return nil
+	}
+	qs := map[string]decide.Question{}
+	subj := map[string]string{}
+	bs := map[string]any{}
+	for i, b := range buttons {
+		id := fmt.Sprintf("b%d", i)
+		bs[id] = map[string]any{"label": b.Label, "type": b.Type, "role": b.Role}
+		qs[id] = decide.Choice("What does button "+id+" do?", buttonKindOptions)
+		subj[id] = b.Label
+	}
+	ans, err := e.D.Ask(ctx, "button.kind", map[string]any{"page": page, "buttons": bs}, qs, subj)
+	var out []string
+	for i, b := range buttons {
+		kind := ""
+		if err == nil {
+			kind = ans[fmt.Sprintf("b%d", i)].Choice
+		} else {
+			kind = ruleButtonKind(b)
+		}
+		switch kind {
+		case "tab", "location", "more", "search":
+			out = append(out, b.Sel)
+		}
+	}
+	return out
+}
+
+func ruleButtonKind(b Button) string {
+	l := strings.ToLower(b.Label + " " + b.Role)
+	switch {
+	case regexp.MustCompile(`delete|remove|buy|pay|checkout|send|submit|sign|log ?in|subscribe|order`).MatchString(l):
+		return "action"
+	case b.Role == "tab" || strings.Contains(l, "tab"):
+		return "tab"
+	case regexp.MustCompile(`gps|locat|near`).MatchString(l):
+		return "location"
+	case regexp.MustCompile(`more|next|load`).MatchString(l):
+		return "more"
+	}
+	return "other"
 }

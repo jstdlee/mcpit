@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ const usage = `mcpit — make any website usable by an agent.
 Usage:
   mcpit explore <url> [--depth 2] [--max-pages 15] [--no-verify]
   mcpit tools <site>
+  mcpit guide <site>                           llms.txt, robots, agent card and the site map
   mcpit find <site> [--task "what you want to do"]
   mcpit call <site> <tool> [--args '{"q":"lamp"}'] [--yes]
   mcpit serve [--http 127.0.0.1:7801]          MCP server (stdio by default)
@@ -72,6 +74,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdExplore(ctx, a, rest)
 	case "tools":
 		return cmdTools(ctx, a, rest)
+	case "guide":
+		return cmdGuide(ctx, a, rest)
 	case "find":
 		return cmdFind(ctx, a, rest)
 	case "call":
@@ -131,6 +135,7 @@ func cmdExplore(ctx context.Context, a *app.App, args []string) error {
 	noVerify := fs.Bool("no-verify", false, "skip test calls of read tools")
 	chrome := fs.String("chrome", os.Getenv("MCPIT_CHROME"), "path to Chrome/Chromium")
 	quiet := fs.Bool("quiet", false, "no progress output")
+	dump := fs.String("dump", "", "write the raw capture to this JSON file")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -143,7 +148,7 @@ func cmdExplore(ctx context.Context, a *app.App, args []string) error {
 	}
 	start := time.Now()
 	fmt.Fprintf(os.Stderr, "decision model: %s\n", a.Decider.Model())
-	p, err := a.Explore(ctx, pos[0], explore.Options{Depth: *depth, MaxPages: *maxPages, ChromePath: *chrome, Verify: !*noVerify,
+	p, err := a.Explore(ctx, pos[0], explore.Options{Depth: *depth, MaxPages: *maxPages, ChromePath: *chrome, Verify: !*noVerify, Dump: *dump,
 		Progress: func(s string) {
 			if !*quiet {
 				fmt.Fprintln(os.Stderr, "  "+s)
@@ -158,7 +163,18 @@ func cmdExplore(ctx context.Context, a *app.App, args []string) error {
 }
 
 func printTools(p *sitepack.Pack) {
-	fmt.Printf("%s — %d tools\n", p.Origin, len(p.Tools))
+	extra := ""
+	if p.Guide != nil {
+		var docs []string
+		for name, d := range map[string]*sitepack.GuideDoc{"robots": p.Guide.Robots, "llms": p.Guide.LLMs, "agent": p.Guide.AgentCard, "catalog": p.Guide.APICatalog, "ai-plugin": p.Guide.AIPlugin, "mcp": p.Guide.MCP} {
+			if d != nil {
+				docs = append(docs, name)
+			}
+		}
+		sort.Strings(docs)
+		extra = fmt.Sprintf(", guide: %s", strings.Join(docs, " "))
+	}
+	fmt.Printf("%s — %d tools, %d pages%s\n", p.Origin, len(p.Tools), len(p.Pages), extra)
 	for _, t := range p.Tools {
 		var params []string
 		if props, ok := t.InputSchema["properties"].(map[string]any); ok {
@@ -181,6 +197,39 @@ func cmdTools(ctx context.Context, a *app.App, args []string) error {
 	fmt.Fprintf(os.Stderr, "source: %s\n", src)
 	printTools(p)
 	return nil
+}
+
+func cmdGuide(ctx context.Context, a *app.App, args []string) error {
+	if err := need(args, 1, "site"); err != nil {
+		return err
+	}
+	p, _, err := a.Pack(ctx, args[0])
+	if err != nil {
+		return err
+	}
+	if p.Guide != nil {
+		if p.Guide.Description != "" {
+			fmt.Println("About:", p.Guide.Description)
+		}
+		for _, d := range []*sitepack.GuideDoc{p.Guide.Robots, p.Guide.LLMs, p.Guide.AgentCard, p.Guide.APICatalog, p.Guide.AIPlugin, p.Guide.MCP} {
+			if d != nil {
+				fmt.Printf("\n== %s (%d chars)\n%s\n", d.URL, len(d.Text), clipLines(d.Text, 12))
+			}
+		}
+	}
+	fmt.Printf("\n== site map (%d pages)\n", len(p.Pages))
+	for _, pg := range p.Pages {
+		fmt.Printf("  %-12s %-40s %s\n", pg.Category, pg.Path, pg.Title)
+	}
+	return nil
+}
+
+func clipLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		return strings.Join(lines[:n], "\n") + "\n  …"
+	}
+	return s
 }
 
 func cmdFind(ctx context.Context, a *app.App, args []string) error {

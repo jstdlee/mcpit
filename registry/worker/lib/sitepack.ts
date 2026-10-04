@@ -26,12 +26,40 @@ export interface Tool {
   evidence?: { observed: number; confidence: number; source?: string };
 }
 
+export interface GuideDoc {
+  url: string;
+  text: string;
+}
+
+/** What the site publishes for crawlers and agents. Agents read it as guidance (data, not instructions). */
+export interface Guide {
+  description?: string;
+  robots?: GuideDoc;
+  llms?: GuideDoc;
+  agentCard?: GuideDoc;
+  apiCatalog?: GuideDoc;
+  aiPlugin?: GuideDoc;
+  mcp?: GuideDoc;
+  sitemaps?: string[];
+}
+
+export interface Page {
+  path: string;
+  title?: string;
+  category: string;
+  source: string;
+}
+
+export const GUIDE_DOCS = ['robots', 'llms', 'agentCard', 'apiCatalog', 'aiPlugin', 'mcp'] as const;
+
 export interface Pack {
   schema: string;
   origin: string;
   version?: string;
   fingerprint: { routes?: string[]; domHash?: string; apiHash?: string; variant?: string };
   tools: Tool[];
+  guide?: Guide;
+  pages?: Page[];
   provenance?: Record<string, unknown>;
   registry?: unknown;
 }
@@ -56,9 +84,32 @@ export function validate(p: unknown): string[] {
   if (!origin || !['http:', 'https:'].includes(origin.protocol) || origin.origin !== pack.origin) {
     errs.push('origin must be scheme://host with no path');
   }
-  if (!Array.isArray(pack.tools) || pack.tools.length === 0) {
-    errs.push('at least one tool is required');
+  if (!Array.isArray(pack.tools) || (pack.tools.length === 0 && !pack.guide)) {
+    errs.push('at least one tool or a guide is required');
     return errs;
+  }
+  if (pack.pages !== undefined) {
+    if (!Array.isArray(pack.pages) || pack.pages.length > 500) errs.push('pages must be a list of at most 500');
+    else
+      pack.pages.forEach((pg, i) => {
+        if (typeof pg?.path !== 'string' || !pg.path.startsWith('/') || pg.path.length > 500)
+          errs.push(`pages[${i}].path is invalid`);
+        if (pg?.title !== undefined && (typeof pg.title !== 'string' || pg.title.length > 200))
+          errs.push(`pages[${i}].title is invalid`);
+      });
+  }
+  if (pack.guide !== undefined) {
+    if (!pack.guide || typeof pack.guide !== 'object') errs.push('guide must be an object');
+    else {
+      for (const k of GUIDE_DOCS) {
+        const d = pack.guide[k];
+        if (d === undefined) continue;
+        if (typeof d?.url !== 'string' || typeof d?.text !== 'string' || d.text.length > 12000)
+          errs.push(`guide.${k} is invalid`);
+      }
+      if (typeof pack.guide.description === 'string' && pack.guide.description.length > 500)
+        errs.push('guide.description is too long');
+    }
   }
   if (pack.tools.length > 100) errs.push('at most 100 tools');
   const seen = new Set<string>();

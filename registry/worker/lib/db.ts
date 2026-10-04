@@ -78,8 +78,13 @@ export async function publish(
   base: Pack,
   tools: Tool[],
   submissionId: string | null,
+  meta?: { guide?: Pack['guide']; pages?: Pack['pages'] },
 ): Promise<{ version: string; hash: string }> {
   const pack: Pack = { schema: base.schema, origin: base.origin, fingerprint: base.fingerprint, tools };
+  const guide = meta ? meta.guide : base.guide;
+  const pages = meta ? meta.pages : base.pages;
+  if (guide) pack.guide = guide;
+  if (pages?.length) pack.pages = pages;
   const hash = await packHash(pack);
   const version = await nextVersion(env, base.origin);
   const key = await registryKey(env);

@@ -5,7 +5,7 @@ import type { Env } from './env';
 import { ScreeningAgent } from './agent';
 import { b64, keyId, signingString, timingSafeEqual, verifyEd25519 } from './lib/crypto';
 import { activeVersion, audit, now, publish, registryKey, settingNum } from './lib/db';
-import { diffPacks, mergeTools } from './lib/gate';
+import { diffPacks, mergeTools, metaChanged } from './lib/gate';
 import { hard, scan } from './lib/scan';
 import { packHash, validate, type Pack, type Tool } from './lib/sitepack';
 
@@ -161,6 +161,8 @@ route('GET', '/v1/sites/:origin/info', async (_r, env, [origin]) => {
       delist_reason: site.delist_reason,
     },
     tools: active?.parsed.tools ?? [],
+    guide: active?.parsed.guide ?? null,
+    pages: active?.parsed.pages ?? [],
     versions: versions.results,
     submissions: subs.results,
     counters: counters.results,
@@ -352,7 +354,7 @@ route('POST', '/v1/submissions', async (req, env, _p, ctx) => {
     return json({ id, state: 'rejected', outcome: 'rejected', reason, hash, origin: p.origin });
   }
   const diff = diffPacks(active?.parsed ?? null, p).map((d) => ({ id: d.id, change: d.change }));
-  if (diff.every((d) => d.change === 'unchanged')) {
+  if (diff.every((d) => d.change === 'unchanged') && !metaChanged(active?.parsed ?? null, p)) {
     await insert('done', 'confirmation', 'no tool changed (subset of the active version)');
     return json({ id, state: 'done', outcome: 'confirmation', hash, origin: p.origin });
   }
@@ -441,7 +443,18 @@ route('POST', '/v1/admin/quarantine/:id', async (req, env, [id]) => {
     .first<Record<string, string>>();
   if (!q) throw new HttpError(404, 'no open item');
   let published = null;
-  if (action === 'approve') {
+  if (action === 'approve' && q.tool_id === '_guide') {
+    const meta = JSON.parse(q.tool) as { guide?: Pack['guide']; pages?: Pack['pages'] };
+    const active = await activeVersion(env, q.origin);
+    const sub = await env.DB.prepare('SELECT pack FROM submissions WHERE id = ?')
+      .bind(q.submission_id)
+      .first<{ pack: string }>();
+    const base = active?.parsed ?? (JSON.parse(sub!.pack) as Pack);
+    published = await publish(env, base, active?.parsed.tools ?? [], q.submission_id, {
+      guide: meta.guide ?? undefined,
+      pages: meta.pages,
+    });
+  } else if (action === 'approve') {
     const tool = JSON.parse(q.tool) as Tool;
     const active = await activeVersion(env, q.origin);
     const sub = await env.DB.prepare('SELECT pack FROM submissions WHERE id = ?')

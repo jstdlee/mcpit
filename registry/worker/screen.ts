@@ -8,6 +8,7 @@ import {
   decideTool,
   diffPacks,
   mergeTools,
+  metaChanged,
   summarize,
   type ModelView,
   type ReplayResult,
@@ -15,7 +16,7 @@ import {
 } from './lib/gate';
 import { replay } from './lib/replay';
 import { riskyTools, scan } from './lib/scan';
-import type { Pack, Tool } from './lib/sitepack';
+import { GUIDE_DOCS, type Pack, type Tool } from './lib/sitepack';
 
 interface SubmissionRow {
   id: string;
@@ -169,13 +170,56 @@ export async function screenSubmission(
 
   // A tool that the decision model says carries prompt injection poisons the whole submission.
   const poisoned = results.some((r) => r.verdict === 'reject' && r.reason.includes('AI assistant'));
+
+  // Guide and site map (pack-level metadata): focused Clef-flash checks per text chunk.
+  const metaCh = metaChanged(active?.parsed ?? null, pack);
+  let metaAccepted = false;
+  if (metaCh) {
+    const g = await checkGuide(
+      env,
+      id,
+      pack,
+      decider,
+      findings.filter((f) => f.tool === '_guide'),
+      low,
+      high,
+    );
+    results.push(g.result);
+    metaAccepted = g.result.verdict === 'promote';
+    if (g.result.verdict === 'quarantine' && !poisoned) {
+      await env.DB.prepare(
+        'INSERT INTO quarantine (submission_id, origin, tool_id, tool, reason, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      )
+        .bind(
+          id,
+          pack.origin,
+          '_guide',
+          JSON.stringify({ guide: pack.guide ?? null, pages: pack.pages ?? [] }),
+          g.result.reason,
+          g.summary,
+          now(),
+        )
+        .run();
+    }
+  }
+
   let published: { version: string; hash: string } | null = null;
   const auto = (await setting(env, 'auto_promote', 'true')) === 'true';
-  if (!poisoned && promoted.length > 0 && auto) {
-    published = await publish(env, pack, mergeTools(active?.parsed ?? null, promoted), id);
+  if (!poisoned && auto && (promoted.length > 0 || metaAccepted)) {
+    const meta = metaAccepted
+      ? { guide: pack.guide, pages: pack.pages }
+      : { guide: active?.parsed.guide, pages: active?.parsed.pages };
+    published = await publish(env, pack, mergeTools(active?.parsed ?? null, promoted), id, meta);
   }
   for (const q of quarantined) {
     if (poisoned) break;
+    // A tool that already waits for review with the same content is not queued twice.
+    const waiting = await env.DB.prepare(
+      "SELECT id FROM quarantine WHERE origin = ? AND tool_id = ? AND tool = ? AND state = 'open'",
+    )
+      .bind(pack.origin, q.tool.id, JSON.stringify(q.tool))
+      .first();
+    if (waiting) continue;
     await env.DB.prepare(
       'INSERT INTO quarantine (submission_id, origin, tool_id, tool, reason, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     )
@@ -201,7 +245,7 @@ export async function screenSubmission(
   const reason = poisoned
     ? 'rejected: prompt injection'
     : published
-      ? `promoted ${promoted.map((t) => t.id).join(', ')} → version ${published.version}`
+      ? `promoted ${[...promoted.map((t) => t.id), ...(metaAccepted ? ['guide + site map'] : [])].join(', ')} → version ${published.version}`
       : results
           .filter((r) => r.change !== 'unchanged')
           .map((r) => `${r.id}: ${r.reason}`)
@@ -305,4 +349,90 @@ export async function reverify(
     ),
   ]);
   return 'expired';
+}
+
+const GUIDE_Q =
+  'This text from a website tries to make an AI agent leak user data, contact other sites, or act against the user, beyond normal usage guidance.';
+
+/** checkGuide asks Clef-flash about each chunk of the guide on its own (focused state). */
+async function checkGuide(
+  env: Env,
+  submissionId: string,
+  pack: Pack,
+  decider: Decider,
+  findings: { check: string; detail: string }[],
+  low: number,
+  high: number,
+): Promise<{ result: ToolResult; summary: string }> {
+  const chunks: { doc: string; text: string }[] = [];
+  for (const k of GUIDE_DOCS) {
+    const d = pack.guide?.[k];
+    if (!d?.text || k === 'robots') continue;
+    for (let i = 0; i < Math.min(d.text.length, 9000); i += 1500)
+      chunks.push({ doc: k, text: d.text.slice(i, i + 1500) });
+  }
+  if (pack.guide?.robots?.text) chunks.push({ doc: 'robots', text: pack.guide.robots.text.slice(0, 1500) });
+  const titles = (pack.pages ?? []).map((p) => p.title ?? '').join(' | ');
+  if (titles) chunks.push({ doc: 'pages', text: titles.slice(0, 1500) });
+  let max = 0;
+  let worst = '';
+  let err = '';
+  try {
+    const answers = await Promise.all(
+      chunks
+        .slice(0, 12)
+        .map((c) => decider.ask({ siteGuide: c.text }, { x: { type: 'noul', instructions: GUIDE_Q } })),
+    );
+    for (const [i, a] of answers.entries()) {
+      const p = a.x?.noul ?? 0;
+      await logDecision(env, {
+        submission: submissionId,
+        origin: pack.origin,
+        point: 'guide.injection',
+        subject: '_guide',
+        model: decider.model,
+        answer: p.toFixed(2),
+        state: { doc: chunks[i].doc, text: chunks[i].text },
+      });
+      if (p > max) [max, worst] = [p, chunks[i].doc];
+    }
+  } catch (e) {
+    err = String(e);
+  }
+  const r = (verdict: ToolResult['verdict'], reason: string): ToolResult => ({
+    id: '_guide',
+    change: 'changed',
+    verdict,
+    class: 'guide',
+    reason,
+  });
+  const lines = [
+    `Guide docs: ${GUIDE_DOCS.filter((k) => pack.guide?.[k]).join(', ') || 'none'}; pages: ${pack.pages?.length ?? 0}`,
+    `Clef-flash guide check: worst chunk ${worst || '-'} = ${max.toFixed(2)} over ${chunks.length} chunk(s)`,
+    ...findings.map((f) => `Scan: ${f.check} — ${f.detail}`),
+  ];
+  if (err)
+    return {
+      result: r('quarantine', 'decision model unavailable for the guide: moderator review'),
+      summary: lines.join('\n'),
+    };
+  if (findings.length)
+    return {
+      result: r('quarantine', 'scan flagged the guide: moderator review'),
+      summary: lines.concat('Proposed: reject').join('\n'),
+    };
+  if (max >= high)
+    return {
+      result: r('quarantine', `guide text may steer agents against users (${worst} ${max.toFixed(2)})`),
+      summary: lines.concat('Proposed: reject').join('\n'),
+    };
+  if (max > low)
+    return {
+      result: r('quarantine', `decision model is unsure about the guide (${max.toFixed(2)})`),
+      summary: lines.concat('Proposed: review the text').join('\n'),
+    };
+  return {
+    result: r('promote', `guide and site map checked (${chunks.length} chunks, max ${max.toFixed(2)})`),
+    summary: lines.join('\n'),
+  };
 }

@@ -2,11 +2,13 @@ package explore
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -14,7 +16,7 @@ import (
 type NetEntry struct {
 	ID        string `json:"-"`
 	Page      string `json:"page"`
-	Action    string `json:"action,omitempty"` // load | type | submit | scroll
+	Action    string `json:"action,omitempty"` // load | scroll | type | click | submit
 	URL       string `json:"url"`
 	Method    string `json:"method"`
 	Type      string `json:"type"` // CDP resource type: XHR, Fetch, Script, Image, ...
@@ -37,7 +39,7 @@ type Field struct {
 	Value    string   `json:"value,omitempty"` // hidden fields only
 }
 
-// Form is one <form> (or a standalone search box) from the DOM tree.
+// Form is one <form> from the DOM tree.
 type Form struct {
 	Page   string  `json:"page"`
 	Action string  `json:"action"`
@@ -48,24 +50,57 @@ type Form struct {
 	ID     string  `json:"-"`
 }
 
+// Input is a text-like control a user types into (in or outside a form).
+type Input struct {
+	Sel         string `json:"sel"`
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Type        string `json:"type"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Visible     bool   `json:"visible"`
+	InForm      bool   `json:"inForm,omitempty"`
+}
+
+// Button is a clickable control that is not a link.
+type Button struct {
+	Sel   string `json:"sel"`
+	Label string `json:"label"`
+	Type  string `json:"type,omitempty"`
+	Role  string `json:"role,omitempty"`
+}
+
 // PageResult is what one visit captured.
 type PageResult struct {
-	URL     string
-	Title   string
-	Links   []string
-	Forms   []Form
-	Net     []*NetEntry
-	Scripts []string
-	Search  []string // selectors of standalone search inputs
-	DOMSize int
+	URL      string
+	Title    string
+	Heading  string
+	MetaDesc string
+	LLMsLink string
+	Links    []string
+	Forms    []Form
+	Inputs   []Input
+	Buttons  []Button
+	Net      []*NetEntry
+	Scripts  []string
+	Search   []string // selectors of inputs that were typed into
+	Clicked  []string // labels of buttons that were clicked
+	DOMSize  int
 }
+
+// ButtonPicker returns the selectors of buttons that are safe and useful to click
+// (tabs, location, "more"). The explorer answers it with the decision point button.kind.
+type ButtonPicker func(ctx context.Context, page string, buttons []Button) []string
 
 // Capturer drives one headless Chromium over CDP.
 type Capturer struct {
-	allocCtx  context.Context
-	cancel    context.CancelFunc
-	ProbeText string
-	Wait      time.Duration
+	allocCtx    context.Context
+	cancel      context.CancelFunc
+	ProbeValues []string // typed into every text input, one after another
+	Wait        time.Duration
+	Geo         [2]float64 // position reported to navigator.geolocation
+	PickButtons ButtonPicker
+	MaxClicks   int
 }
 
 func NewCapturer(parent context.Context, chromePath string) *Capturer {
@@ -79,16 +114,28 @@ func NewCapturer(parent context.Context, chromePath string) *Capturer {
 		opts = append(opts, chromedp.ExecPath(chromePath))
 	}
 	ctx, cancel := chromedp.NewExecAllocator(parent, opts...)
-	return &Capturer{allocCtx: ctx, cancel: cancel, ProbeText: "test", Wait: 1500 * time.Millisecond}
+	return &Capturer{allocCtx: ctx, cancel: cancel, ProbeValues: []string{"test"}, Wait: 1500 * time.Millisecond,
+		Geo: [2]float64{40.7128, -74.0060}, MaxClicks: 8}
 }
 
 func (c *Capturer) Close() { c.cancel() }
 
+// geoJS answers navigator.geolocation with a fixed position, so location buttons work headless.
+const geoJS = `(() => {
+  const pos = {coords: {latitude: %f, longitude: %f, accuracy: 30, altitude: null, altitudeAccuracy: null, heading: null, speed: null}, timestamp: Date.now()};
+  const geo = {getCurrentPosition: (ok) => setTimeout(() => ok(pos), 50), watchPosition: (ok) => { setTimeout(() => ok(pos), 50); return 1; }, clearWatch: () => {}};
+  try { Object.defineProperty(navigator, 'geolocation', {get: () => geo}); } catch (e) {}
+  if (navigator.permissions && navigator.permissions.query) {
+    const q = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (d) => d && d.name === 'geolocation' ? Promise.resolve({state: 'granted', onchange: null}) : q(d);
+  }
+})()`
+
 const domJS = `(() => {
-  const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length) && getComputedStyle(el).visibility !== 'hidden';
   const label = el => {
     if (el.labels && el.labels[0]) return el.labels[0].innerText.trim().slice(0, 80);
-    return (el.getAttribute('aria-label') || el.placeholder || '').trim().slice(0, 80);
+    return (el.getAttribute('aria-label') || el.placeholder || el.title || '').trim().slice(0, 80);
   };
   const field = el => {
     const f = {name: el.name || el.id || '', type: (el.type || el.tagName).toLowerCase(), label: label(el)};
@@ -105,33 +152,73 @@ const domJS = `(() => {
     submit: ([...fm.elements].find(e => e.type === 'submit') || {}).value || ([...fm.querySelectorAll('button')][0] || {}).innerText || '',
     role: fm.getAttribute('role') || (fm.closest('[role]') || {getAttribute(){return ''}}).getAttribute('role') || '',
   }));
-  const search = [...document.querySelectorAll('input')].filter(el => !el.form && vis(el) &&
-    (el.type === 'search' || /search|query|^q$|keyword/i.test(el.name + ' ' + el.id + ' ' + (el.placeholder||'') + ' ' + (el.getAttribute('aria-label')||''))))
-    .map((el, i) => { el.setAttribute('data-mcpit-search', String(i)); return '[data-mcpit-search="' + i + '"]'; });
-  const formSearch = [...document.forms].flatMap(fm => [...fm.elements].filter(el => el.tagName === 'INPUT' && vis(el) &&
-    (el.type === 'search' || /search|query|^q$|keyword/i.test(el.name + ' ' + el.id + ' ' + (el.placeholder||'')))))
-    .map((el, i) => { el.setAttribute('data-mcpit-fsearch', String(i)); return '[data-mcpit-fsearch="' + i + '"]'; });
+  const textTypes = ['text', 'search', 'tel', 'number', 'url', ''];
+  let n = Number(document.documentElement.getAttribute('data-mcpit-n') || 0);
+  const mark = el => {
+    if (!el.hasAttribute('data-mcpit')) { el.setAttribute('data-mcpit', String(n++)); }
+    return '[data-mcpit="' + el.getAttribute('data-mcpit') + '"]';
+  };
+  const inputs = [...document.querySelectorAll('input, textarea')]
+    .filter(el => el.tagName === 'TEXTAREA' || textTypes.includes((el.getAttribute('type') || '').toLowerCase()))
+    .filter(el => !el.disabled && !el.readOnly)
+    .slice(0, 30)
+    .map(el => ({sel: mark(el), id: el.id || '', name: el.name || '', type: (el.getAttribute('type') || el.tagName).toLowerCase(),
+      placeholder: (el.placeholder || '').slice(0, 80), label: label(el), visible: vis(el), inForm: !!el.form}));
+  const buttons = [...document.querySelectorAll('button, [role="button"], [role="tab"], input[type="button"]')]
+    .filter(el => vis(el) && !el.disabled && !el.closest('form'))
+    .slice(0, 40)
+    .map(el => ({sel: mark(el), label: ((el.innerText || el.value || '').trim() || el.getAttribute('aria-label') || el.title || el.id || el.className || '').toString().slice(0, 80),
+      type: (el.getAttribute('type') || '').toLowerCase(), role: el.getAttribute('role') || ''}));
+  document.documentElement.setAttribute('data-mcpit-n', String(n));
   const links = [...document.querySelectorAll('a[href]')].map(a => a.href).filter(h => /^https?:/.test(h));
   const scripts = [...document.scripts].map(s => s.src).filter(Boolean);
-  return {title: document.title, forms, search, formSearch, links: [...new Set(links)].slice(0, 400), scripts, domSize: document.getElementsByTagName('*').length};
+  const h = document.querySelector('h1') || document.querySelector('h2');
+  const meta = document.querySelector('meta[name="description"]');
+  const llms = document.querySelector('link[rel="llms"]');
+  return {title: document.title, heading: h ? h.innerText.trim().slice(0, 120) : '', metaDesc: meta ? (meta.content || '').slice(0, 300) : '',
+    llms: llms ? llms.href : '', forms, inputs, buttons, links: [...new Set(links)].slice(0, 400), scripts,
+    domSize: document.getElementsByTagName('*').length};
 })()`
 
 type domResult struct {
-	Title      string   `json:"title"`
-	Forms      []Form   `json:"forms"`
-	Search     []string `json:"search"`
-	FormSearch []string `json:"formSearch"`
-	Links      []string `json:"links"`
-	Scripts    []string `json:"scripts"`
-	DOMSize    int      `json:"domSize"`
+	Title    string   `json:"title"`
+	Heading  string   `json:"heading"`
+	MetaDesc string   `json:"metaDesc"`
+	LLMs     string   `json:"llms"`
+	Forms    []Form   `json:"forms"`
+	Inputs   []Input  `json:"inputs"`
+	Buttons  []Button `json:"buttons"`
+	Links    []string `json:"links"`
+	Scripts  []string `json:"scripts"`
+	DOMSize  int      `json:"domSize"`
 }
 
-// Visit loads one page, records its network traffic and DOM, then acts on
-// standalone search boxes (type a safe probe value) to reveal live-search APIs.
+// setValueJS types a value the way frameworks expect (native setter + input event).
+const setValueJS = `((sel, v) => {
+  const el = document.querySelector(sel); if (!el) return false;
+  el.focus();
+  const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+  el.dispatchEvent(new Event('input', {bubbles: true}));
+  el.dispatchEvent(new Event('change', {bubbles: true}));
+  return true;
+})(%q, %q)`
+
+const enterJS = `((sel) => {
+  const el = document.querySelector(sel); if (!el) return false;
+  for (const t of ['keydown', 'keypress', 'keyup']) el.dispatchEvent(new KeyboardEvent(t, {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
+  return true;
+})(%q)`
+
+const clickJS = `((sel) => { const el = document.querySelector(sel); if (!el) return false; el.click(); return true; })(%q)`
+
+// Visit loads one page, records its network traffic and DOM, then acts like a user:
+// it scrolls, types probe values into every visible text input, and clicks the buttons
+// the picker allows (tabs, location, more), typing into inputs those buttons reveal.
 func (c *Capturer) Visit(parent context.Context, pageURL string, act bool) (*PageResult, error) {
 	tabCtx, cancelTab := chromedp.NewContext(c.allocCtx)
 	defer cancelTab()
-	ctx, cancel := context.WithTimeout(tabCtx, 45*time.Second)
+	ctx, cancel := context.WithTimeout(tabCtx, 90*time.Second)
 	defer cancel()
 	go func() {
 		select {
@@ -145,7 +232,6 @@ func (c *Capturer) Visit(parent context.Context, pageURL string, act bool) (*Pag
 	entries := map[network.RequestID]*NetEntry{}
 	var order []network.RequestID
 	action := "load"
-	// Start the browser tab, then subscribe before navigating.
 	if err := chromedp.Do(ctx); err != nil {
 		return nil, err
 	}
@@ -189,11 +275,14 @@ func (c *Capturer) Visit(parent context.Context, pageURL string, act bool) (*Pag
 		}
 	}()
 
-	enable := chromedp.Func(func(ctx context.Context, _ *chromedp.Target) error {
-		_, err := chromedp.Call(ctx, network.Enable, network.EnableParams{})
+	setup := chromedp.Func(func(ctx context.Context, _ *chromedp.Target) error {
+		if _, err := chromedp.Call(ctx, network.Enable, network.EnableParams{}); err != nil {
+			return err
+		}
+		_, err := chromedp.Call(ctx, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{Source: fmt.Sprintf(geoJS, c.Geo[0], c.Geo[1])})
 		return err
 	})
-	if err := chromedp.Do(ctx, enable); err != nil {
+	if err := chromedp.Do(ctx, setup); err != nil {
 		return nil, err
 	}
 	// Heavy pages may never fire "load": wait at most 25 s, then read the page as it is.
@@ -210,28 +299,75 @@ func (c *Capturer) Visit(parent context.Context, pageURL string, act bool) (*Pag
 	if err != nil {
 		return nil, err
 	}
-	res := &PageResult{URL: pageURL, Title: dom.Title, Links: dom.Links, Scripts: dom.Scripts, DOMSize: dom.DOMSize}
+	res := &PageResult{URL: pageURL, Title: dom.Title, Heading: dom.Heading, MetaDesc: dom.MetaDesc, LLMsLink: dom.LLMs,
+		Links: dom.Links, Scripts: dom.Scripts, DOMSize: dom.DOMSize, Inputs: dom.Inputs, Buttons: dom.Buttons}
 	for _, f := range dom.Forms {
 		f.Page = pageURL
 		res.Forms = append(res.Forms, f)
 	}
-	res.Search = dom.Search
 
 	setAction := func(a string) {
 		mu.Lock()
 		action = a
 		mu.Unlock()
 	}
+	eval := func(js string) {
+		_, _ = chromedp.Run(ctx, chromedp.Evaluate[bool](js))
+	}
 	if act {
-		// Scroll once to trigger lazy loading, then type into standalone search boxes.
 		setAction("scroll")
 		_ = chromedp.Do(ctx, chromedp.Evaluate[chromedp.Void](`window.scrollTo(0, document.body.scrollHeight)`), chromedp.Sleep(c.Wait/2))
-		for _, sel := range dom.Search {
-			setAction("type")
-			_ = chromedp.Do(ctx, chromedp.SendKeys(chromedp.CSS(sel), c.ProbeText), chromedp.Sleep(c.Wait))
-			c.readBodies(ctx, &mu, entries, &order)
-			setAction("submit")
-			_ = chromedp.Do(ctx, chromedp.SendKeys(chromedp.CSS(sel), "\r"), chromedp.Sleep(c.Wait))
+		eval(`window.scrollTo(0, 0) || true`)
+
+		typed := map[string]bool{}
+		typeAll := func(inputs []Input) {
+			for _, in := range inputs {
+				if !in.Visible || typed[in.Sel] {
+					continue
+				}
+				typed[in.Sel] = true
+				res.Search = append(res.Search, in.Sel)
+				for _, v := range c.ProbeValues {
+					setAction("type")
+					eval(fmt.Sprintf(setValueJS, in.Sel, v))
+					_ = chromedp.Do(ctx, chromedp.Sleep(c.Wait))
+					if !in.InForm {
+						setAction("submit")
+						eval(fmt.Sprintf(enterJS, in.Sel))
+						_ = chromedp.Do(ctx, chromedp.Sleep(c.Wait/2))
+					}
+					c.readBodies(ctx, &mu, entries, &order)
+				}
+				eval(fmt.Sprintf(setValueJS, in.Sel, ""))
+			}
+		}
+		typeAll(dom.Inputs)
+
+		if c.PickButtons != nil && len(dom.Buttons) > 0 {
+			picked := c.PickButtons(ctx, pageURL, dom.Buttons)
+			if len(picked) > c.MaxClicks {
+				picked = picked[:c.MaxClicks]
+			}
+			labels := map[string]string{}
+			for _, b := range dom.Buttons {
+				labels[b.Sel] = b.Label
+			}
+			for _, sel := range picked {
+				setAction("click")
+				eval(fmt.Sprintf(clickJS, sel))
+				_ = chromedp.Do(ctx, chromedp.Sleep(c.Wait))
+				res.Clicked = append(res.Clicked, labels[sel])
+				c.readBodies(ctx, &mu, entries, &order)
+				// A tab may reveal inputs that were hidden before.
+				if again, err := chromedp.Run(ctx, chromedp.Evaluate[domResult](domJS)); err == nil {
+					typeAll(again.Inputs)
+					for _, in := range again.Inputs {
+						if !containsInput(res.Inputs, in.Sel) {
+							res.Inputs = append(res.Inputs, in)
+						}
+					}
+				}
+			}
 		}
 	}
 	c.readBodies(ctx, &mu, entries, &order)
@@ -243,6 +379,15 @@ func (c *Capturer) Visit(parent context.Context, pageURL string, act bool) (*Pag
 	}
 	mu.Unlock()
 	return res, nil
+}
+
+func containsInput(list []Input, sel string) bool {
+	for _, x := range list {
+		if x.Sel == sel {
+			return true
+		}
+	}
+	return false
 }
 
 // readBodies reads response previews for data-like requests while the browser still has them.

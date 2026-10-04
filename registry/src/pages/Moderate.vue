@@ -252,7 +252,9 @@ const labels: Record<string, string> = {
           <div class="row">
             <strong>{{ host(q.origin) }}</strong
             ><code>{{ q.tool_id }}</code>
-            <span class="pill" :class="q.tool.effect === 'read' ? 'ok' : 'warn'">{{ q.tool.effect }}</span>
+            <span class="pill" :class="q.tool_id === '_guide' ? 'grey' : q.tool.effect === 'read' ? 'ok' : 'warn'">{{
+              q.tool_id === '_guide' ? 'guide + site map' : q.tool.effect
+            }}</span>
             <span class="muted small">{{ ago(q.created_at) }}</span>
             <span class="grow"></span>
             <button

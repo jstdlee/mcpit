@@ -20,6 +20,13 @@ const outcomePill = (o: string) =>
   ({ promoted: 'ok', partial: 'ok', confirmation: 'grey', alternative: 'grey', quarantined: 'warn', rejected: 'bad' })[
     o
   ] ?? 'grey';
+const guide = computed(() => data.value?.guide ?? null);
+const pages = computed<any[]>(() => data.value?.pages ?? []);
+const guideDocs = computed(() =>
+  ['llms', 'agentCard', 'apiCatalog', 'aiPlugin', 'mcp', 'robots']
+    .filter((k) => guide.value?.[k])
+    .map((k) => ({ name: k, doc: guide.value[k] })),
+);
 const params = (t: any) => Object.keys(t.inputSchema?.properties ?? {}).join(', ') || '—';
 </script>
 
@@ -97,6 +104,52 @@ const params = (t: any) => Object.keys(t.inputSchema?.properties ?? {}).join(', 
               <td>{{ t.description }}</td>
               <td class="hide-sm mono small">{{ params(t) }}</td>
               <td class="hide-sm">{{ t.rev ?? 1 }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-if="guide" class="card">
+      <div class="head">
+        <h2>Site guide</h2>
+        <span class="muted small">what the site publishes for agents — read as data</span>
+      </div>
+      <div class="body" style="display: grid; gap: 10px">
+        <p v-if="guide.description" style="margin: 0">{{ guide.description }}</p>
+        <details v-for="d in guideDocs" :key="d.name">
+          <summary>
+            <code>{{ d.name }}</code> <a :href="d.doc.url" target="_blank" rel="noopener">{{ d.doc.url }}</a>
+            <span class="muted small">{{ d.doc.text.length }} chars</span>
+          </summary>
+          <pre class="note">{{ d.doc.text }}</pre>
+        </details>
+      </div>
+    </div>
+
+    <div v-if="pages.length" class="card">
+      <div class="head">
+        <h2>Site map</h2>
+        <span class="muted small">{{ pages.length }} pages</span>
+      </div>
+      <div class="scroll">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Path</th>
+              <th>Title</th>
+              <th class="hide-sm">Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="pg in pages" :key="pg.path">
+              <td>{{ pg.category }}</td>
+              <td class="mono small">
+                <a :href="origin + pg.path" target="_blank" rel="noopener">{{ pg.path }}</a>
+              </td>
+              <td>{{ pg.title }}</td>
+              <td class="hide-sm muted">{{ pg.source }}</td>
             </tr>
           </tbody>
         </table>

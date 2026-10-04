@@ -526,6 +526,18 @@ Lesson (live registry): the injection question "contains instructions aimed at a
 
 Open: OpenAPI `security` → `auth`; slow sites need a longer verify budget.
 
+### 11.3 Guide, site map and user-like interaction (2026-10-04)
+
+Problem found on sgbus.ohmyai.xyz (a single-page app): the explorer found 1 tool. The inputs (`busStopInput`, `placeInput`) had no search-like name, the place input was behind a tab, the GPS buttons were never clicked, and llms.txt / agent.json / api-catalog were read as plain pages.
+
+Changes:
+- **Interaction:** type probe values into every text input (in or outside forms; forms are never submitted); probe values = `test` + numeric examples from the guide or sitemap; Clef-flash decision point `button.kind` (tab, location, more, search, ui, media, action, other) — only tab/location/more/search are clicked; inputs revealed by a click are typed into; `navigator.geolocation` answers with guide example coordinates.
+- **Guide:** robots.txt (`Sitemap:`, `Llms:`), sitemap.xml (+ index), llms.txt / llms-full.txt, `/.well-known/agent.json`, `/.well-known/api-catalog` (RFC 9727 → service-desc), `ai-plugin.json`, `mcp.json`, meta description. Stored as `pack.guide`; endpoints it names become tools (source `guide`); example values (`?q=510123`, `?lat=…&lng=…`) become test arguments; `name=...` marks a parameter as user input.
+- **Site map:** `pack.pages` = path, category (first path segment; `{id}` → `detail`), title (heading, or path when the `<title>` repeats on most pages), source (crawl/sitemap).
+- **Registry:** validates guide/pages; scan: guide URLs on-site (hard), injection/secret text (risky); screening checks each guide chunk with a focused Clef-flash call (`guide.injection`, wording tested: clean llms.txt 0.01–0.02, planted injection 0.94); a guide/site-map change alone is a reviewable update; quarantine and approve work for `_guide`; the site page shows the guide and site map; MCP tool `mcpit_guide`, CLI `mcpit guide`.
+
+sgbus result: 7 tools found (geocode, nearest, search, busstops, arrivals, OCR, voice) + guide + 6 pages in ~110 s. Live registry: version `.2` promoted 4 read tools + guide; OCR and voice (POST) quarantined; version `.3` promoted the improved site map only.
+
 ## 12. Next step
 
 1. Tune the explorer on real sites (§11.2).

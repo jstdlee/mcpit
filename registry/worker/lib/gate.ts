@@ -1,7 +1,7 @@
 // Tool-level diff and the promotion rules. Facts come from rules and replay; the
 // decision model's answers come in as probabilities. No LLM decides anything here.
 
-import { canonicalTool, type Pack, type Tool } from './sitepack';
+import { canonicalJSON, canonicalTool, type Pack, type Tool } from './sitepack';
 
 export type Change = 'unchanged' | 'added' | 'changed';
 
@@ -148,4 +148,10 @@ export function summarize(results: ToolResult[]): { state: string; outcome: stri
   if (n('quarantine') > 0) return { state: 'quarantined', outcome: 'quarantined' };
   if (n('keep') > 0) return { state: 'done', outcome: 'alternative' };
   return { state: 'rejected', outcome: 'rejected' };
+}
+
+/** metaChanged reports whether the guide or the site map differs from the active version. */
+export function metaChanged(active: Pack | null, candidate: Pack): boolean {
+  const m = (p: Pack | null) => canonicalJSON({ guide: p?.guide ?? null, pages: p?.pages ?? null });
+  return m(active) !== m(candidate) && (!!candidate.guide || !!candidate.pages?.length);
 }

@@ -44,6 +44,42 @@ export function scan(pack: Pack, opts: { allowPrivate?: boolean } = {}): Finding
     out.push({ check: 'private-target', level: 'hard', detail: `${origin.hostname} is a private or local host` });
   }
   for (const t of pack.tools) out.push(...scanTool(pack, t, origin, opts));
+  out.push(...scanGuide(pack, origin));
+  return out;
+}
+
+/** The guide must come from the site, and its text must not carry obvious injections or secrets. */
+function scanGuide(pack: Pack, origin: URL): Finding[] {
+  const out: Finding[] = [];
+  const g = pack.guide;
+  if (!g) return out;
+  const docs = Object.entries(g).filter(([, v]) => v && typeof v === 'object' && !Array.isArray(v)) as [
+    string,
+    { url: string; text: string },
+  ][];
+  for (const [name, d] of docs) {
+    try {
+      if (siteOf(new URL(d.url).hostname) !== siteOf(origin.hostname))
+        out.push({ tool: '_guide', check: 'origin-rule', level: 'hard', detail: `guide.${name} is not from the site` });
+    } catch {
+      out.push({ tool: '_guide', check: 'url', level: 'hard', detail: `guide.${name} has a bad URL` });
+    }
+    if (INJECTION.test(d.text))
+      out.push({
+        tool: '_guide',
+        check: 'injection',
+        level: 'risky',
+        detail: `guide.${name} has text aimed at an AI assistant`,
+      });
+    for (const [kind, re] of SECRET_PATTERNS.slice(0, 5))
+      if (re.test(d.text))
+        out.push({
+          tool: '_guide',
+          check: 'secret',
+          level: 'risky',
+          detail: `guide.${name} looks like it holds a ${kind}`,
+        });
+  }
   return out;
 }
 

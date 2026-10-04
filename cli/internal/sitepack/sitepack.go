@@ -23,6 +23,8 @@ type Pack struct {
 	Version     string       `json:"version,omitempty"`
 	Fingerprint Fingerprint  `json:"fingerprint"`
 	Tools       []Tool       `json:"tools"`
+	Guide       *Guide       `json:"guide,omitempty"`
+	Pages       []Page       `json:"pages,omitempty"`
 	Provenance  *Provenance  `json:"provenance,omitempty"`
 	Registry    *RegistryRef `json:"registry,omitempty"`
 }
@@ -32,6 +34,32 @@ type Fingerprint struct {
 	DOMHash string   `json:"domHash,omitempty"`
 	APIHash string   `json:"apiHash,omitempty"`
 	Variant string   `json:"variant,omitempty"`
+}
+
+// Guide holds what the site publishes for crawlers and agents (robots.txt, llms.txt,
+// agent cards, API catalogs). Agents read it as guidance; the registry scans it.
+type Guide struct {
+	Description string    `json:"description,omitempty"` // meta description of the home page
+	Robots      *GuideDoc `json:"robots,omitempty"`
+	LLMs        *GuideDoc `json:"llms,omitempty"`
+	AgentCard   *GuideDoc `json:"agentCard,omitempty"`
+	APICatalog  *GuideDoc `json:"apiCatalog,omitempty"`
+	AIPlugin    *GuideDoc `json:"aiPlugin,omitempty"`
+	MCP         *GuideDoc `json:"mcp,omitempty"`
+	Sitemaps    []string  `json:"sitemaps,omitempty"`
+}
+
+type GuideDoc struct {
+	URL  string `json:"url"`
+	Text string `json:"text"`
+}
+
+// Page is one entry of the site map: path, category and title.
+type Page struct {
+	Path     string `json:"path"`
+	Title    string `json:"title,omitempty"`
+	Category string `json:"category"`
+	Source   string `json:"source"` // crawl | sitemap | guide
 }
 
 type Tool struct {
@@ -128,8 +156,8 @@ func (p *Pack) Validate() error {
 	if err != nil || (o.Scheme != "https" && o.Scheme != "http") || o.Host == "" || o.Path != "" {
 		errs = append(errs, "origin must be scheme://host with no path")
 	}
-	if len(p.Tools) == 0 {
-		errs = append(errs, "at least one tool is required")
+	if len(p.Tools) == 0 && p.Guide == nil {
+		errs = append(errs, "at least one tool or a guide is required")
 	}
 	seen := map[string]bool{}
 	for i, t := range p.Tools {
@@ -159,6 +187,9 @@ func (p *Pack) Validate() error {
 		if len(t.Description) > 500 {
 			errs = append(errs, at+".description is longer than 500 characters")
 		}
+	}
+	if len(p.Pages) > 500 {
+		errs = append(errs, "at most 500 pages")
 	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))

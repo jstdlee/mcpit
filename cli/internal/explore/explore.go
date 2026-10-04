@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -32,6 +33,7 @@ type Options struct {
 	NoBrowser  bool // declared specs and static HTML only
 	Verify     bool
 	Progress   func(string)
+	Dump       string // write the raw capture (pages, forms, requests, kinds) to this JSON file
 }
 
 type Explorer struct {
@@ -41,6 +43,9 @@ type Explorer struct {
 	HTTP      *http.Client
 	origin    string
 	robots    []string // disallowed path prefixes
+	llmsHint  string
+	examples  map[string][]string // parameter examples from the guide
+	sitemap   []string
 }
 
 func New(d *decide.Decider, o Options) *Explorer {
@@ -68,8 +73,14 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	e.origin = origin
 	pack := &sitepack.Pack{Schema: sitepack.Schema, Origin: origin}
 
-	e.say("reading declared specs")
+	e.say("reading declared specs and the site guide")
 	cands := e.declared(ctx)
+	guide, sitemapURLs, guideCands := e.readGuide(ctx)
+	e.sitemap = sitemapURLs
+	if guide != nil {
+		e.say("guide: robots=%t llms=%t agent=%t catalog=%t sitemap=%d urls, %d endpoints named", guide.Robots != nil, guide.LLMs != nil, guide.AgentCard != nil, guide.APICatalog != nil, len(sitemapURLs), len(guideCands))
+	}
+	cands = append(cands, guideCands...)
 
 	var pages []*PageResult
 	if !e.Opts.NoBrowser {
@@ -84,8 +95,27 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 
 	// Requests: rules settle assets; the decision model sorts the rest, one batch per page.
 	var apis []*NetEntry
+	type dumpReq struct {
+		*NetEntry
+		Kind string `json:"kind"`
+	}
+	type dumpPage struct {
+		URL     string    `json:"url"`
+		Title   string    `json:"title"`
+		DOMSize int       `json:"domSize"`
+		Links   []string  `json:"links"`
+		Forms   []Form    `json:"forms"`
+		Search  []string  `json:"searchInputs"`
+		Net     []dumpReq `json:"requests"`
+	}
+	var dump []dumpPage
 	for _, p := range pages {
 		kinds := e.classifyRequests(ctx, p.URL, p.Net)
+		dp := dumpPage{URL: p.URL, Title: p.Title, DOMSize: p.DOMSize, Links: p.Links, Forms: p.Forms, Search: p.Search}
+		for _, n := range p.Net {
+			dp.Net = append(dp.Net, dumpReq{n, kinds[n]})
+		}
+		dump = append(dump, dp)
 		for _, n := range p.Net {
 			if kinds[n] == "api" && e.sameSite(n.URL) && n.Status < 400 {
 				apis = append(apis, n)
@@ -93,6 +123,11 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 		}
 	}
 	cands = append(cands, e.fromNetwork(apis)...)
+	if e.Opts.Dump != "" {
+		if b, err := json.MarshalIndent(dump, "", "  "); err == nil {
+			os.WriteFile(e.Opts.Dump, b, 0o644)
+		}
+	}
 
 	// Forms from the DOM tree.
 	var forms []Form
@@ -114,6 +149,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	}
 
 	cands = dedupe(cands)
+	e.applyExamples(cands)
 	cands = e.decideUseful(ctx, cands)
 	e.decideParamRoles(ctx, cands)
 	e.decideEffects(ctx, cands)
@@ -135,8 +171,18 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 		pack.Tools = e.verify(ctx, origin, pack.Tools)
 	}
 	pack.Fingerprint = fingerprint(pages, pack.Tools)
+	pack.Pages = buildPages(pages, e.sitemap)
+	if guide != nil {
+		for _, p := range pages {
+			if p.MetaDesc != "" {
+				guide.Description = p.MetaDesc
+				break
+			}
+		}
+		pack.Guide = guide
+	}
 	pack.Provenance = &sitepack.Provenance{Client: "mcpit/0.1", Decisions: "rules+" + e.D.Model(), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if len(pack.Tools) == 0 {
+	if len(pack.Tools) == 0 && pack.Guide == nil {
 		return pack, fmt.Errorf("no tools found on %s", origin)
 	}
 	return pack, pack.Validate()
@@ -146,7 +192,24 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error) {
 	cap := NewCapturer(ctx, e.Opts.ChromePath)
 	defer cap.Close()
-	cap.ProbeText = e.ProbeText
+	cap.ProbeValues = e.probeValues()
+	if g, ok := e.geoHint(); ok {
+		cap.Geo = g
+	}
+	if e.D.Available() {
+		cap.PickButtons = e.pickButtons
+	} else {
+		cap.PickButtons = func(_ context.Context, _ string, bs []Button) []string {
+			var out []string
+			for _, b := range bs {
+				switch ruleButtonKind(b) {
+				case "tab", "location", "more":
+					out = append(out, b.Sel)
+				}
+			}
+			return out
+		}
+	}
 	seenTpl := map[string]bool{templateOf(seed): true}
 	shapes := map[string]int{shapeOf(seed): 1}
 	level := []string{seed}
@@ -171,10 +234,14 @@ func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error
 				continue
 			}
 			pages = append(pages, p)
-			for _, l := range p.Links {
+			links := p.Links
+			if depth == 0 {
+				links = append(links, e.sitemap...) // sitemap URLs count as depth-1 links
+			}
+			for _, l := range links {
 				l = stripFragment(l)
 				tpl := templateOf(l)
-				if e.sameOrigin(l) && !seenTpl[tpl] && shapes[shapeOf(l)] < 2 {
+				if e.sameOrigin(l) && !seenTpl[tpl] && shapes[shapeOf(l)] < 2 && isPageURL(l) {
 					seenTpl[tpl] = true
 					shapes[shapeOf(l)]++
 					next = append(next, l)
@@ -211,6 +278,7 @@ type param struct {
 	required bool
 	options  []string
 	numeric  bool
+	variable bool // the guide shows it as a placeholder (name=...)
 }
 
 func (c *candidate) param(name string) *param {
@@ -537,7 +605,7 @@ func dedupe(cands []*candidate) []*candidate {
 	seen := map[string]*candidate{}
 	var out []*candidate
 	for _, c := range cands {
-		k := c.tool.Request.Method + " " + c.tool.Request.URL + " " + graphqlOpFromBody(c.tool.Request.Body)
+		k := c.tool.Request.Method + " " + regexp.MustCompile(`\{\{[^}]+\}\}`).ReplaceAllString(c.tool.Request.URL, "{{}}") + " " + graphqlOpFromBody(c.tool.Request.Body)
 		if prev, ok := seen[k]; ok {
 			// Prefer declared and network sources over forms for the same endpoint,
 			// and keep the parameters that only the other source saw.
@@ -549,8 +617,16 @@ func dedupe(cands []*candidate) []*candidate {
 				wp := winner.param(lp.name)
 				if wp.in == "" {
 					*wp = *lp
-				} else if len(wp.options) == 0 {
-					wp.options = lp.options
+				} else {
+					if len(wp.options) == 0 {
+						wp.options = lp.options
+					}
+					wp.variable = wp.variable || lp.variable
+				}
+			}
+			if winner.tool.Description == "" || strings.HasPrefix(winner.tool.Description, "GET ") {
+				if loser.tool.Description != "" {
+					winner.tool.Description = loser.tool.Description
 				}
 			}
 			winner.observed += loser.observed
@@ -567,7 +643,7 @@ func dedupe(cands []*candidate) []*candidate {
 }
 
 func rank(src string) int {
-	return map[string]int{"form": 1, "network": 2, "opensearch": 3, "openapi": 4}[src]
+	return map[string]int{"form": 1, "guide": 2, "network": 3, "opensearch": 4, "openapi": 5}[src]
 }
 
 func graphqlOpFromBody(b any) string {
@@ -914,6 +990,48 @@ func templateOf(raw string) string {
 	}
 	sort.Strings(keys)
 	return u.Host + p + "?" + strings.Join(keys, "&")
+}
+
+// isPageURL skips files that the guide reader already handles (txt, xml, json, .well-known).
+func isPageURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	p := strings.ToLower(u.Path)
+	if strings.HasPrefix(p, "/.well-known/") {
+		return false
+	}
+	for _, ext := range []string{".txt", ".xml", ".json", ".pdf", ".zip", ".png", ".jpg", ".svg", ".css", ".js"} {
+		if strings.HasSuffix(p, ext) {
+			return false
+		}
+	}
+	return true
+}
+
+// probeValues: "test", plus a numeric code seen in the guide or the sitemap (such as a
+// stop code or a postal code), so inputs that expect numbers also fire their requests.
+func (e *Explorer) probeValues() []string {
+	vals := []string{e.ProbeText}
+	num := regexp.MustCompile(`^\d{3,8}$`)
+	for _, list := range e.examples {
+		for _, v := range list {
+			if num.MatchString(v) && len(vals) < 3 {
+				vals = appendUnique(vals, v)
+			}
+		}
+	}
+	for _, s := range e.sitemap {
+		if u, err := url.Parse(s); err == nil {
+			for _, seg := range strings.Split(u.Path, "/") {
+				if num.MatchString(seg) && len(vals) < 3 {
+					vals = appendUnique(vals, seg)
+				}
+			}
+		}
+	}
+	return vals
 }
 
 // shapeOf keeps the first path segment and the segment count: /people/a/lists/b and
