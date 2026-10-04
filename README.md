@@ -29,6 +29,7 @@ go install github.com/jstdlee/mcpit/cli/cmd/mcpit@latest                        
 Every push to `main` builds a release for Linux, macOS and Windows (amd64 and arm64).
 
 - **[Install and get started](docs/INSTALL.md)** — requirements, first commands, where data lives, safety.
+- **[omp end-to-end evaluation](docs/eval/omp-e2e.md)** — install, use case, submit, and the effect of sharing (−52 % time, 19 → 10 agent steps).
 - **[mcpit for agents](docs/AGENTS.md)** — `mcpit setup <agent>` for omp, Claude Code, Codex, Cursor, VS Code and Gemini CLI; MCP tools; the skill; alerts.
 
 ## Get started

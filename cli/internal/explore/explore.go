@@ -658,6 +658,9 @@ func dedupe(cands []*candidate) []*candidate {
 					if len(wp.options) == 0 {
 						wp.options = lp.options
 					}
+					if len(wp.values) == 0 {
+						wp.values = lp.values // observed values give declared tools a test call
+					}
 					wp.variable = wp.variable || lp.variable
 				}
 			}

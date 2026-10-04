@@ -123,10 +123,10 @@ export async function screenSubmission(
     }),
   );
 
-  // Decision points, one batched Clef-flash call for the whole submission.
-  const qs: Record<string, Question> = {};
+  // Decision points: one focused Clef-flash call per changed tool (its own small state).
+  // A shared state with many tools made the answers unsure (59 tools → 35 quarantined).
   const state: Record<string, unknown> = {};
-  changed.forEach((d, i) => {
+  const perTool = changed.map((d, i) => {
     const k = `t${i}`;
     state[k] = {
       candidate: toolView(d.candidate),
@@ -134,38 +134,37 @@ export async function screenSubmission(
       candidateTest: cand.get(d.id),
       activeTest: act.get(d.id) ?? null,
     };
-    qs[`${k}_desc`] = { type: 'noul', instructions: `The description of tool ${k} matches what its endpoint does.` };
-    qs[`${k}_eff`] = {
-      type: 'choice',
-      instructions: `What does calling the candidate of tool ${k} do to data on the site?`,
-      criteria: EFFECT_OPTIONS,
+    const q: Record<string, Question> = {
+      desc: { type: 'noul', instructions: 'The description of this tool matches what its endpoint does.' },
+      eff: {
+        type: 'choice',
+        instructions: 'What does calling the candidate tool do to data on the site?',
+        criteria: EFFECT_OPTIONS,
+      },
     };
     if (d.active) {
-      qs[`${k}_imp`] = {
-        type: 'noul',
-        instructions: `The candidate of tool ${k} is a real improvement over its active version.`,
-      };
-      qs[`${k}_cls`] = {
-        type: 'choice',
-        instructions: `What kind of change is the candidate of tool ${k}?`,
-        criteria: CLASS_OPTIONS,
-      };
+      q.imp = { type: 'noul', instructions: 'The candidate tool is a real improvement over its active version.' };
+      q.cls = { type: 'choice', instructions: 'What kind of change is the candidate tool?', criteria: CLASS_OPTIONS };
     }
+    return { k, d, q };
   });
   let answers: Record<string, Answer> = {};
   let modelError = '';
-  if (Object.keys(qs).length > 0) {
+  if (perTool.length > 0) {
     try {
-      // The injection check gets its own call per tool with only that tool's text as state:
-      // Clef-flash missed a subtle injection inside the shared state (0.05) but caught it alone (0.95).
-      const [shared, ...inj] = await Promise.all([
-        decider.ask({ origin: pack.origin, fingerprintChanged, tools: state }, qs),
-        ...changed.map((d) =>
+      // The injection check is a separate call with only the tool's text as state:
+      // Clef-flash missed a subtle injection inside a shared state (0.05) but caught it alone (0.95).
+      const results = await pool(perTool, 6, async ({ k, d, q }) => {
+        const [main, inj] = await Promise.all([
+          decider.ask({ origin: pack.origin, fingerprintChanged, tool: state[k] }, q),
           decider.ask(agentText(d.candidate), { inj: { type: 'noul', instructions: INJECTION_Q } }),
-        ),
-      ]);
-      answers = shared;
-      changed.forEach((_, i) => (answers[`t${i}_inj`] = inj[i].inj));
+        ]);
+        return { k, main, inj };
+      });
+      for (const { k, main, inj } of results) {
+        for (const [q, a] of Object.entries(main)) answers[`${k}_${q}`] = a;
+        answers[`${k}_inj`] = inj.inj;
+      }
     } catch (e) {
       modelError = String(e);
     }
@@ -412,6 +411,21 @@ export async function reverify(
     ),
   ]);
   return 'expired';
+}
+
+/** pool runs fn over items with at most n at a time, keeping the order of results. */
+async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]);
+      }
+    }),
+  );
+  return out;
 }
 
 /** brokenReason: both registry test calls of an unchanged tool failed. */

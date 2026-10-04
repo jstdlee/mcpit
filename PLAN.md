@@ -545,6 +545,12 @@ sgbus result: 7 tools found (geocode, nearest, search, busstops, arrivals, OCR, 
 - **Integrity on use (client):** before every use of a registry pack — local hash vs signed hash (tamper → blocked); registry status (cached 10 min, `GET /v1/sites/{origin}/status`): de-listed, `bad` or `suspicious` → blocked; expired → warning; a newer signed version → pulled and verified automatically. Local packs of a flagged site → warning. Blocked: CLI refuses unless `--force`; MCP returns an "MCPIT ALERT (blocked)" error result and asks the user by elicitation, or refuses without it; the server instructions tell agents to show the alert and wait for explicit confirmation.
 - **Moderator:** new verdict `suspicious` (good / suspicious / bad).
 
+### 11.5 Install, agents, cross-platform releases, omp end-to-end test (2026-10-04)
+
+- Docs: [docs/INSTALL.md](docs/INSTALL.md), [docs/AGENTS.md](docs/AGENTS.md); skill `cli/internal/agentsetup/SKILL.md`; `mcpit setup <omp|claude|codex|cursor|gemini|vscode>`; `install.sh` / `install.ps1` with SHA-256 checks; `go install github.com/jstdlee/mcpit/cli/cmd/mcpit@latest`.
+- CI: Go tests on Linux, macOS and Windows; a release for linux/darwin/windows × amd64/arm64 on every push to `main` (v0.3.N).
+- omp end-to-end test and its fixes: [docs/eval/omp-e2e.md](docs/eval/omp-e2e.md). With crates.io, the second user needed 10 agent steps instead of 19 and 226 s instead of 470 s, with no exploring.
+
 ## 12. Next step
 
 1. Tune the explorer on real sites (§11.2).
