@@ -465,6 +465,25 @@ Script: `experiments/cf-models/api_vs_asset.py`. 16 captured requests from one p
 
 Result: Clef-flash is good enough for `req.kind` as the main decider, with batching.
 
-## 11. Next step
+## 11. Stack and v0.1 goal (2026-10-04)
+
+Stack decisions:
+- **Decision model:** Clef-flash only (`@cf/cloudflare/clef-flash`). Unsure answers go to the user (CLI) or the moderator (registry). Local jev stays a plug-in option (same System One API).
+- **Registry and console:** Cloudflare Worker + Vue 3, built with Vite+ (`vp`) and `@cloudflare/vite-plugin`; Agents SDK for the screening agent; D1 for data (R2 later for large packs).
+- **CLI:** Go, one static binary `mcpit`. Headless capture with `chromedp` (Chrome DevTools Protocol).
+- **MCP server:** inside the same Go binary (`mcpit serve`), with the official Go SDK `github.com/modelcontextprotocol/go-sdk`. Reason: one binary, no Node runtime for users, and it shares the store, executor and decision code with the CLI.
+
+**v0.1 goal: one end-to-end loop works.**
+
+1. `mcpit explore <url>` (depth ≤ 2) finds the forms and APIs of a test site through CDP capture, with Clef-flash decision points; it saves a sitepack.
+2. `mcpit call` and the MCP tools call those tools over HTTP.
+3. `mcpit key init` + moderator approval + `mcpit submit` send the pack to the registry.
+4. The registry runs the gate (canonical hash, duplicate rules, static scan, diff, screening agent with replay + Clef-flash) and makes it active, or quarantines risky tools.
+5. On a clean store, `mcpit pull` + `mcpit call` work with no exploration.
+6. The console shows the dashboard and the moderator pages (keys, quarantine, settings, verdicts, de-list).
+
+Done when: Go unit tests + an end-to-end test against a local fixture site pass; registry logic tests pass (`vp test`); the loop runs against the local registry (`vp dev`).
+
+## 12. Next step
 
 M0: monorepo skeleton, sitepack schema v1, MIT license, CI.
