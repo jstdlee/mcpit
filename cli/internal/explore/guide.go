@@ -351,7 +351,7 @@ func firstFloat(lists ...[]string) *float64 {
 
 // buildPages makes the site map: crawled pages with their heading or title, then
 // sitemap URLs. The category is the first path segment.
-func buildPages(pages []*PageResult, sitemap []string, feed []feedItem) []sitepack.Page {
+func buildPages(pages []*PageResult, sitemap []string, feed []feedItem, pats []*Pattern) []sitepack.Page {
 	// On single-page apps every page shares one <title>; such a title says nothing.
 	count := map[string]int{}
 	for _, p := range pages {
@@ -360,9 +360,25 @@ func buildPages(pages []*PageResult, sitemap []string, feed []feedItem) []sitepa
 	generic := func(t string) bool { return len(pages) > 2 && count[t]*2 > len(pages) }
 	seen := map[string]bool{}
 	var out []sitepack.Page
+	patRow := map[string]int{} // pattern key -> index in out
 	add := func(raw, title, source string) {
 		u, err := url.Parse(raw)
 		if err != nil || !isPageURL(raw) {
+			return
+		}
+		// Interchangeable item pages collapse into one pattern row.
+		if p := matchPattern(pats, raw); p != nil && p.Kind == "items" && u.RawQuery == "" {
+			if i, ok := patRow[p.Key]; ok {
+				if len(out[i].Examples) < 5 && !seen[u.Path] {
+					out[i].Examples = append(out[i].Examples, u.Path)
+				}
+				seen[u.Path] = true
+				return
+			}
+			seen[u.Path] = true
+			patRow[p.Key] = len(out)
+			out = append(out, sitepack.Page{Path: p.Template, Category: p.Prefix, Source: source, Pattern: true, Count: p.Count,
+				Title: fmt.Sprintf("%s pages (%d items)", strings.ToUpper(p.Prefix[:1])+p.Prefix[1:], p.Count), Examples: []string{u.Path}})
 			return
 		}
 		path := u.Path
@@ -679,6 +695,9 @@ func (e *Explorer) fromPageShapes(pages []*PageResult, sitemap []string) []*cand
 		if len(out) >= 6 {
 			break
 		}
+		if p := patternByKey(e.patterns, k); p == nil || p.Kind != "items" {
+			continue // sections (/manage/account, /manage/organizations) are not one tool
+		}
 		g := groups[k]
 		first := g[0]
 		var vary []int
@@ -731,4 +750,13 @@ func (e *Explorer) fromPageShapes(pages []*PageResult, sitemap []string) []*cand
 		out = append(out, c)
 	}
 	return out
+}
+
+func patternByKey(ps []*Pattern, key string) *Pattern {
+	for _, p := range ps {
+		if p.Key == key {
+			return p
+		}
+	}
+	return nil
 }

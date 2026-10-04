@@ -161,9 +161,15 @@ const params = (t: any) => Object.keys(t.inputSchema?.properties ?? {}).join(', 
             <tr v-for="pg in pages" :key="pg.path">
               <td>{{ pg.category }}</td>
               <td class="mono small">
-                <a :href="origin + pg.path" target="_blank" rel="noopener">{{ pg.path }}</a>
+                <span v-if="pg.pattern">{{ pg.path }}</span>
+                <a v-else :href="origin + pg.path" target="_blank" rel="noopener">{{ pg.path }}</a>
               </td>
-              <td>{{ pg.title }}</td>
+              <td>
+                {{ pg.title }}
+                <div v-if="pg.pattern && pg.examples?.length" class="small muted">
+                  e.g. {{ pg.examples.join(', ') }}
+                </div>
+              </td>
               <td class="hide-sm muted">{{ pg.source }}</td>
             </tr>
           </tbody>

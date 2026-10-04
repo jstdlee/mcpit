@@ -27,6 +27,59 @@ const model = ref('');
 const keyFilter = ref('pending');
 const busy = ref(false);
 const vstats = ref<any[]>([]);
+const review = ref<any>(null);
+const reviewLoading = ref(false);
+const choice = ref<Record<number, string>>({});
+const fmt = (v: unknown) => (typeof v === 'number' ? v.toFixed(2) : '—');
+
+async function loadReview(origin: string) {
+  reviewLoading.value = true;
+  error.value = '';
+  try {
+    review.value = await api(`/v1/admin/review/${enc(origin)}`, { admin: true });
+    const c: Record<number, string> = {};
+    for (const it of review.value.items) c[it.id] = it.suggestion === 'review' ? 'skip' : it.suggestion;
+    choice.value = c;
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    reviewLoading.value = false;
+  }
+}
+
+async function applyReview(mode: 'selection' | 'approve-all' | 'reject-all') {
+  if (!review.value) return;
+  const ids = review.value.items.map((it: any) => it.id as number);
+  const approve =
+    mode === 'approve-all'
+      ? ids
+      : mode === 'reject-all'
+        ? []
+        : ids.filter((id: number) => choice.value[id] === 'approve');
+  const reject =
+    mode === 'reject-all'
+      ? ids
+      : mode === 'approve-all'
+        ? []
+        : ids.filter((id: number) => choice.value[id] === 'reject');
+  busy.value = true;
+  try {
+    const r = await api(`/v1/admin/review/${enc(review.value.origin)}`, {
+      method: 'POST',
+      body: JSON.stringify({ approve, reject }),
+      admin: true,
+    });
+    msg.value = `${r.approved} approved, ${r.rejected} rejected${r.published ? ' → version ' + r.published.version : ''}`;
+    const origin = review.value.origin;
+    review.value = null;
+    await load();
+    if (rows.value.some((x: any) => x.origin === origin)) await loadReview(origin);
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    busy.value = false;
+  }
+}
 
 async function signIn() {
   setToken(tokenInput.value.trim());
@@ -49,7 +102,7 @@ async function load() {
       rows.value = (
         await api(`/v1/admin/keys${keyFilter.value ? '?state=' + keyFilter.value : ''}`, { admin: true })
       ).keys;
-    if (tab.value === 'quarantine') rows.value = (await api('/v1/admin/quarantine?state=open', { admin: true })).items;
+    if (tab.value === 'quarantine') rows.value = (await api('/v1/admin/review', { admin: true })).sites;
     if (tab.value === 'sites') rows.value = (await api('/v1/admin/sites', { admin: true })).sites;
     if (tab.value === 'submissions') rows.value = (await api('/v1/admin/submissions', { admin: true })).submissions;
     if (tab.value === 'audit') rows.value = (await api('/v1/admin/audit', { admin: true })).audit;
@@ -247,36 +300,108 @@ const labels: Record<string, string> = {
         </div>
       </template>
 
-      <!-- quarantine -->
+      <!-- quarantine: site-level batch review -->
       <template v-if="tab === 'quarantine'">
         <div v-if="!rows.length" class="empty">Nothing waits for review.</div>
-        <div v-for="q in rows" :key="q.id" class="body" style="border-bottom: 1px solid var(--line)">
-          <div class="row">
-            <strong>{{ host(q.origin) }}</strong
-            ><code>{{ q.tool_id }}</code>
-            <span class="pill" :class="q.tool_id === '_guide' ? 'grey' : q.tool.effect === 'read' ? 'ok' : 'warn'">{{
-              q.tool_id === '_guide' ? 'guide + site map' : q.tool.effect
-            }}</span>
-            <span class="muted small">{{ ago(q.created_at) }}</span>
-            <span class="grow"></span>
-            <button
-              class="btn primary"
-              :disabled="busy"
-              @click="act(`/v1/admin/quarantine/${q.id}`, { action: 'approve' }, 'Tool approved and published')"
-            >
-              Approve
-            </button>
-            <button
-              class="btn danger"
-              :disabled="busy"
-              @click="act(`/v1/admin/quarantine/${q.id}`, { action: 'reject' }, 'Tool rejected')"
-            >
-              Reject
-            </button>
-          </div>
-          <p class="small">{{ q.reason }}</p>
-          <pre class="note">{{ q.summary }}</pre>
+        <div v-else class="body row">
+          <span class="muted small">Sites with waiting items:</span>
+          <button
+            v-for="r in rows"
+            :key="r.origin"
+            type="button"
+            class="btn"
+            :class="{ primary: review?.origin === r.origin }"
+            :disabled="busy"
+            @click="loadReview(r.origin)"
+          >
+            {{ host(r.origin) }} ({{ r.n }})
+          </button>
         </div>
+        <div v-if="reviewLoading" class="body muted">Running the checklist and the decision model for each item…</div>
+        <template v-if="review && !reviewLoading">
+          <div class="body" style="border-top: 1px solid var(--line)">
+            <div class="row">
+              <strong>{{ host(review.origin) }}</strong>
+              <span class="pill ok">suggest approve {{ review.summary.approve }}</span>
+              <span class="pill bad">suggest reject {{ review.summary.reject }}</span>
+              <span class="pill warn">needs you {{ review.summary.review }}</span>
+              <span class="grow"></span>
+              <button class="btn primary" :disabled="busy" @click="applyReview('selection')">Apply selection</button>
+              <button class="btn" :disabled="busy" @click="applyReview('approve-all')">Approve all</button>
+              <button class="btn danger" :disabled="busy" @click="applyReview('reject-all')">Reject all</button>
+            </div>
+            <div class="row small" style="margin-top: 8px">
+              <span v-for="c in review.site" :key="c.name" class="pill" :class="c.ok === false ? 'warn' : 'grey'"
+                >{{ c.name }}: {{ c.detail }}</span
+              >
+            </div>
+            <p class="muted small">
+              The selection starts from the decision model's suggestions (Clef-flash + checklist). Change any item, then
+              apply: approved tools are published together as one new version.
+            </p>
+          </div>
+          <div class="scroll">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Decision</th>
+                  <th>Tool</th>
+                  <th>Suggestion</th>
+                  <th class="hide-sm">Checklist</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="it in review.items" :key="it.id">
+                  <td>
+                    <div class="seg" role="group" :aria-label="'Decision for ' + it.toolId">
+                      <button
+                        v-for="d in ['approve', 'skip', 'reject']"
+                        :key="d"
+                        type="button"
+                        :aria-pressed="choice[it.id] === d"
+                        @click="choice[it.id] = d"
+                      >
+                        {{ d }}
+                      </button>
+                    </div>
+                  </td>
+                  <td>
+                    <code>{{ it.toolId }}</code>
+                    <span class="pill" :class="it.effect === 'read' ? 'ok' : 'warn'" style="margin-left: 4px">{{
+                      it.effect
+                    }}</span>
+                    <div class="small mono muted">{{ it.method }} {{ it.url }}</div>
+                    <div class="small">{{ it.description }}</div>
+                  </td>
+                  <td>
+                    <span
+                      class="pill"
+                      :class="{
+                        ok: it.suggestion === 'approve',
+                        bad: it.suggestion === 'reject',
+                        warn: it.suggestion === 'review',
+                      }"
+                      >{{ it.suggestion }}</span
+                    >
+                    <div class="small muted">{{ it.why }}</div>
+                    <div v-if="it.model.approve !== undefined" class="small mono muted">
+                      publish {{ fmt(it.model.approve) }} · useful {{ fmt(it.model.useful) }} · desc
+                      {{ fmt(it.model.desc) }} · inj {{ fmt(it.model.injection) }}
+                    </div>
+                  </td>
+                  <td class="hide-sm small">
+                    <div v-for="c in it.checks" :key="c.name">
+                      <span :class="c.ok === false ? 'err' : 'muted'">{{
+                        c.ok === false ? '✗' : c.ok ? '✓' : '–'
+                      }}</span>
+                      {{ c.name }}: {{ c.detail }}
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
       </template>
 
       <!-- sites -->

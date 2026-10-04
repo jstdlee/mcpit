@@ -49,6 +49,8 @@ type Explorer struct {
 	sitemap   []string
 	feedItems []feedItem
 	altArgs   map[string][]map[string]any // more example arguments per tool id
+	patterns  []*Pattern                  // path families of the site (items or sections)
+	declTpls  []string                    // URL templates from declared specs
 }
 
 func New(d *decide.Decider, o Options) *Explorer {
@@ -97,6 +99,21 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	}
 
 	e.markBlocked(ctx, pages)
+	var all []string
+	for _, p := range pages {
+		if !p.Blocked {
+			all = append(all, p.URL)
+		}
+	}
+	e.patterns = e.detectPatterns(ctx, append(all, e.sitemap...))
+	for _, p := range e.patterns {
+		e.say("pattern %s: %d pages, %s", p.Template, p.Count, p.Kind)
+	}
+	for _, c := range cands {
+		if c.source == "openapi" || c.source == "guide" {
+			e.declTpls = append(e.declTpls, c.tool.Request.URL)
+		}
+	}
 
 	// Requests: rules settle assets; the decision model sorts the rest, one batch per page.
 	var apis []*NetEntry
@@ -127,7 +144,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 			}
 		}
 	}
-	cands = append(cands, e.fromNetwork(apis)...)
+	cands = append(cands, e.fromNetwork(ctx, apis)...)
 	if e.Opts.Dump != "" {
 		if b, err := json.MarshalIndent(dump, "", "  "); err == nil {
 			os.WriteFile(e.Opts.Dump, b, 0o644)
@@ -184,7 +201,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 		pack.Tools = e.verify(ctx, origin, pack.Tools)
 	}
 	pack.Fingerprint = fingerprint(pages, pack.Tools)
-	pack.Pages = buildPages(pages, e.sitemap, e.feedItems)
+	pack.Pages = buildPages(pages, e.sitemap, e.feedItems, e.patterns)
 	if guide != nil {
 		for _, p := range pages {
 			if p.MetaDesc != "" && guide.Description == "" {
@@ -225,6 +242,7 @@ func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error
 	}
 	seenTpl := map[string]bool{templateOf(seed): true}
 	shapes := map[string]int{shapeOf(seed): 1}
+	sampled := map[string]bool{}
 	level := []string{seed}
 	var pages []*PageResult
 	var firstErr error
@@ -260,6 +278,28 @@ func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error
 					next = append(next, l)
 				}
 			}
+		}
+		// Repeating item pages (/project/{name}/): one sample per family is enough (path.pattern).
+		if len(next) > 1 {
+			pool := next
+			if depth == 0 {
+				pool = append(append([]string(nil), next...), e.sitemap...)
+			}
+			pats := e.detectPatterns(ctx, pool)
+			var kept []string
+			for _, l := range next {
+				if p := matchPattern(pats, l); p != nil && p.Kind == "items" {
+					if sampled[p.Key] {
+						continue
+					}
+					sampled[p.Key] = true
+				}
+				kept = append(kept, l)
+			}
+			if skipped := len(next) - len(kept); skipped > 0 {
+				e.say("depth %d: %d repeating item pages skipped (one sample per pattern)", depth+1, skipped)
+			}
+			next = kept
 		}
 		if remaining := e.Opts.MaxPages - len(pages); len(next) > remaining && remaining > 0 {
 			next = e.rankLinks(ctx, next)[:remaining]
@@ -429,7 +469,14 @@ func setParam(p *param, query map[string]string, body map[string]any, v string) 
 }
 
 // fromNetwork groups API requests by method + path template.
-func (e *Explorer) fromNetwork(entries []*NetEntry) []*candidate {
+func (e *Explorer) fromNetwork(ctx context.Context, entries []*NetEntry) []*candidate {
+	// Literal item names in API URLs (/api/v1/crates/serde) become template parameters:
+	// first by declared templates, then by item patterns among the observed URLs.
+	var apiURLs []string
+	for _, n := range entries {
+		apiURLs = append(apiURLs, n.URL)
+	}
+	apiPats := e.detectPatterns(ctx, apiURLs)
 	groups := map[string]*candidate{}
 	var order []string
 	for _, n := range entries {
@@ -437,7 +484,7 @@ func (e *Explorer) fromNetwork(entries []*NetEntry) []*candidate {
 		if err != nil {
 			continue
 		}
-		path, pathParams := templatePath(u.Path)
+		path, pathParams := e.templateAPIPath(u, apiPats)
 		op := graphqlOp(n.Body)
 		key := n.Method + " " + u.Scheme + "://" + u.Host + path + " " + op
 		c := groups[key]
@@ -1387,4 +1434,41 @@ func uniq(s []string) []string {
 		}
 	}
 	return out
+}
+
+// templateAPIPath maps a literal API path onto a declared template when one matches,
+// else onto an item pattern among observed API URLs, else numeric/hex ids only.
+func (e *Explorer) templateAPIPath(u *url.URL, pats []*Pattern) (string, []pathParam) {
+	host := u.Scheme + "://" + u.Host
+	for _, tpl := range e.declTpls {
+		if !strings.HasPrefix(tpl, host) || !strings.Contains(tpl, "{{") {
+			continue
+		}
+		tp := strings.TrimPrefix(tpl, host)
+		if templateRe(tp).MatchString(u.Path) {
+			var params []pathParam
+			tsegs, segs := strings.Split(tp, "/"), strings.Split(u.Path, "/")
+			for i := range tsegs {
+				if m := regexp.MustCompile(`^\{\{([A-Za-z0-9_]+)\}\}$`).FindStringSubmatch(tsegs[i]); m != nil && i < len(segs) {
+					params = append(params, pathParam{m[1], segs[i]})
+				}
+			}
+			return regexp.MustCompile(`\{\{([A-Za-z0-9_]+)\}\}`).ReplaceAllString(tp, "{$1}"), params
+		}
+	}
+	if p := matchPattern(pats, u.String()); p != nil && p.Kind == "items" {
+		segs := strings.Split(u.Path, "/")
+		var params []pathParam
+		// shapeKey trims the leading slash, so segment Pos sits at index Pos+1 here
+		for n, pos := range p.Positions {
+			if i := pos + 1; i < len(segs) {
+				params = append(params, pathParam{p.Params[n], segs[i]})
+				segs[i] = "{" + p.Params[n] + "}"
+			}
+		}
+		if len(params) > 0 {
+			return strings.Join(segs, "/"), params
+		}
+	}
+	return templatePath(u.Path)
 }

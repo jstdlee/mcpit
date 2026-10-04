@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/jstdlee/mcpit/cli/internal/decide"
@@ -120,7 +122,7 @@ func TestGuideStandards(t *testing.T) {
 	if search == nil || search.param("term").roleFact != "query" {
 		t.Fatalf("SearchAction tool missing: %+v", cands)
 	}
-	pages := buildPages(nil, sitemap, e.feedItems)
+	pages := buildPages(nil, sitemap, e.feedItems, nil)
 	if len(pages) != 4 || pages[2].Title != "First post" || pages[2].Category != "news" {
 		t.Errorf("pages: %+v", pages)
 	}
@@ -130,7 +132,9 @@ func TestPageShapes(t *testing.T) {
 	e := New(&decide.Decider{}, Options{})
 	e.origin = "https://pypi.example"
 	pages := []*PageResult{{URL: "https://pypi.example/project/httpx/", Title: "httpx · PyPI"}, {URL: "https://pypi.example/help/"}}
-	sitemap := []string{"https://pypi.example/project/requests/", "https://pypi.example/project/flask/", "https://pypi.example/user/alice/", "https://other.example/project/x/"}
+	sitemap := []string{"https://pypi.example/project/requests/", "https://pypi.example/project/flask/", "https://pypi.example/project/django/",
+		"https://pypi.example/project/numpy/", "https://pypi.example/user/alice/", "https://other.example/project/x/"}
+	e.patterns = e.detectPatterns(context.Background(), append([]string{pages[0].URL}, sitemap...))
 	cs := e.fromPageShapes(pages, sitemap)
 	if len(cs) != 1 {
 		t.Fatalf("want 1 page tool (project), got %d", len(cs))
@@ -138,5 +142,54 @@ func TestPageShapes(t *testing.T) {
 	c := cs[0]
 	if c.tool.ID != "project_page" || c.tool.Request.URL != "https://pypi.example/project/{{name}}/" || c.param("name").values[0] != "httpx" {
 		t.Fatalf("tool: %+v", c.tool)
+	}
+}
+
+// The user's example: /project/<name>/ is one item family; /manage/account and
+// /manage/organizations are distinct sections.
+func TestPatternsItemsAndSections(t *testing.T) {
+	e := New(&decide.Decider{}, Options{})
+	e.origin = "https://pypi.example"
+	urls := []string{"https://pypi.example/project/102203594-topsis/", "https://pypi.example/project/1neuron-pypi-overlordiam/",
+		"https://pypi.example/project/256-encrypt/", "https://pypi.example/project/3pc-panel/", "https://pypi.example/project/a2rpc/",
+		"https://pypi.example/project/aad/", "https://pypi.example/manage/account/", "https://pypi.example/manage/organizations/",
+		"https://pypi.example/classifiers/"}
+	ps := e.detectPatterns(context.Background(), urls)
+	kinds := map[string]string{}
+	for _, p := range ps {
+		kinds[p.Template] = p.Kind
+	}
+	if kinds["/project/{name}/"] != "items" || kinds["/manage/{name}/"] != "sections" || len(ps) != 2 {
+		t.Fatalf("patterns: %v", kinds)
+	}
+	pages := buildPages(nil, urls, nil, ps)
+	var rows []string
+	for _, p := range pages {
+		rows = append(rows, p.Path)
+	}
+	want := "/project/{name}/ /manage/account/ /manage/organizations/ /classifiers/"
+	if strings.Join(rows, " ") != want {
+		t.Fatalf("site map rows: %v", rows)
+	}
+	if pages[0].Count != 6 || len(pages[0].Examples) != 5 || !pages[0].Pattern {
+		t.Fatalf("pattern row: %+v", pages[0])
+	}
+	e.declTpls = []string{"https://crates.example/api/v1/crates/{{name}}/owners"}
+	u, _ := url.Parse("https://crates.example/api/v1/crates/axmg/owners")
+	if p, params := e.templateAPIPath(u, nil); p != "/api/v1/crates/{name}/owners" || params[0].value != "axmg" {
+		t.Fatalf("declared template: %s %v", p, params)
+	}
+}
+
+func TestPatternTwoSegments(t *testing.T) {
+	e := New(&decide.Decider{}, Options{})
+	e.origin = "https://pypi.example"
+	var urls []string
+	for _, x := range []string{"a/1.0.1", "b/2.4.34", "c/0.2.1", "d/2027.0.6", "e/0.4.8"} {
+		urls = append(urls, "https://pypi.example/project/"+x+"/")
+	}
+	ps := e.detectPatterns(context.Background(), urls)
+	if len(ps) != 1 || ps[0].Template != "/project/{name}/{version}/" || ps[0].Kind != "items" {
+		t.Fatalf("patterns: %+v", ps[0])
 	}
 }

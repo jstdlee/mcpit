@@ -62,6 +62,8 @@ export interface GateInput {
   activeReplay?: ReplayResult;
   model: ModelView;
   broken?: string; // unchanged tool whose registry test call failed twice (reason)
+  coveredBy?: string; // a template tool already covers this literal URL (fact)
+  repeating?: string; // one of several literal tools that differ in one path segment (fact)
   low: number; // unsure band
   high: number;
 }
@@ -81,8 +83,14 @@ export function decideTool(g: GateInput): ToolResult {
 
   if (d.change === 'unchanged') {
     if (g.broken) return r('retire', 'drift', `retired: ${g.broken}`);
+    if (g.coveredBy) return r('retire', 'regression', `retired: the live template tool ${g.coveredBy} covers it`);
     return r('confirm', 'confirmation', 'same as the active version');
   }
+  if (g.coveredBy)
+    return d.change === 'changed'
+      ? r('retire', 'regression', `retired: the live template tool ${g.coveredBy} covers it`)
+      : r('reject', 'regression', `covered by the template tool ${g.coveredBy}`);
+  if (g.repeating) return r('quarantine', 'risky', `repeating item endpoint (${g.repeating}): review as one template`);
   if ((m.injection ?? 0) >= 0.5)
     return r('reject', 'risky', `decision model: text aimed at an AI assistant (${fmt(m.injection)})`);
   if (g.risky) return r('quarantine', 'risky', 'write, payment, destructive or unproven effect: moderator review');
@@ -175,4 +183,28 @@ export function summarize(results: ToolResult[]): { state: string; outcome: stri
 export function metaChanged(active: Pack | null, candidate: Pack): boolean {
   const m = (p: Pack | null) => canonicalJSON({ guide: p?.guide ?? null, pages: p?.pages ?? null });
   return m(active) !== m(candidate) && (!!candidate.guide || !!candidate.pages?.length);
+}
+
+/** coveredBy returns the id of a template tool whose URL pattern matches this literal tool's URL.
+ *  For id-like parameters the literal value must hold a digit: /products/search is not /products/{{id}}. */
+export function coveredBy(t: Tool, others: Tool[]): string | undefined {
+  if (/\{\{/.test(t.request.url)) return undefined;
+  for (const o of others) {
+    if (o.id === t.id || o.request.method !== t.request.method || !/\{\{/.test(o.request.url)) continue;
+    const names = [...o.request.url.matchAll(/\{\{([^}]+)\}\}/g)].map((x) => x[1]);
+    const re = new RegExp(
+      '^' +
+        o.request.url
+          .split(/\{\{[^}]+\}\}/)
+          .map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+          .join('([^/]+)') +
+        '$',
+    );
+    const m = re.exec(t.request.url);
+    if (!m) continue;
+    const idLike = (n: string) => /(^|_)id$|Id$/.test(n);
+    if (names.some((n, i) => idLike(n) && !/\d/.test(m[i + 1]))) continue;
+    return o.id;
+  }
+  return undefined;
 }

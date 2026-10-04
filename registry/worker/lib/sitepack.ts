@@ -48,10 +48,13 @@ export interface Guide {
 }
 
 export interface Page {
-  path: string;
+  path: string; // a path, or a template such as /project/{name}/ when pattern is true
   title?: string;
   category: string;
   source: string;
+  pattern?: boolean;
+  count?: number;
+  examples?: string[];
 }
 
 export const GUIDE_DOCS = [
@@ -109,6 +112,13 @@ export function validate(p: unknown): string[] {
           errs.push(`pages[${i}].path is invalid`);
         if (pg?.title !== undefined && (typeof pg.title !== 'string' || pg.title.length > 200))
           errs.push(`pages[${i}].title is invalid`);
+        if (
+          pg?.examples !== undefined &&
+          (!Array.isArray(pg.examples) ||
+            pg.examples.length > 10 ||
+            pg.examples.some((x) => typeof x !== 'string' || !x.startsWith('/')))
+        )
+          errs.push(`pages[${i}].examples is invalid`);
       });
   }
   if (pack.guide !== undefined) {

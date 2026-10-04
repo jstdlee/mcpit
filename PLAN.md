@@ -551,6 +551,12 @@ sgbus result: 7 tools found (geocode, nearest, search, busstops, arrivals, OCR, 
 - CI: Go tests on Linux, macOS and Windows; a release for linux/darwin/windows × amd64/arm64 on every push to `main` (v0.3.N).
 - omp end-to-end test and its fixes: [docs/eval/omp-e2e.md](docs/eval/omp-e2e.md). With crates.io, the second user needed 10 agent steps instead of 19 and 226 s instead of 470 s, with no exploring.
 
+### 11.6 Repeating items and site-level batch review (2026-10-04)
+
+- **Explorer (decision point `path.pattern`):** same-shape paths (first segment, segment count, trailing slash) with 1–2 varying segments form a family. Clef-flash (or local jev) decides `items` (interchangeable: `/project/httpx/`, `/project/flask/`) or `sections` (distinct: `/manage/account/`, `/manage/organizations/`). Rule fallback: ≥5 members → items; all plain words → sections. The crawl tests one sample per items family; the site map shows one row `/project/{name}/` with the count and up to 5 examples; network URLs map onto declared templates (OpenAPI, guide) first, then onto items families.
+- **Gate (facts, before the model):** a new literal tool that a template tool covers (`/api/products/981` vs `/api/products/{{id}}`) → reject; a live or changed one → retire. For id-like parameters the literal value must hold a digit (`/products/search` is not covered). Three or more literal tools that differ in one path segment, with no template → quarantine as one repeating family.
+- **Batch review (`GET/POST /v1/admin/review/{origin}`, console Quarantine tab):** all waiting items of a site in one view. Checklist per item: path, scan, duplicate, repeating, effect, login, test call (replay + `resp.data`). Clef-flash per tool (focused state): useful, desc, effect, approve, injection → suggestion approve / review / reject. Site checks: status, live tools, repeating families, write tools. The moderator presets from the suggestions, changes what they want, and applies once: one new version, one audit row (`quarantine.batch`).
+
 ## 12. Next step
 
 1. Tune the explorer on real sites (§11.2).

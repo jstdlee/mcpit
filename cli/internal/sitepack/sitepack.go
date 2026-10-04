@@ -67,10 +67,13 @@ type GuideDoc struct {
 
 // Page is one entry of the site map: path, category and title.
 type Page struct {
-	Path     string `json:"path"`
-	Title    string `json:"title,omitempty"`
-	Category string `json:"category"`
-	Source   string `json:"source"` // crawl | sitemap | guide
+	Path     string   `json:"path"` // a path, or a template such as /project/{name}/ when Pattern is true
+	Title    string   `json:"title,omitempty"`
+	Category string   `json:"category"`
+	Source   string   `json:"source"`             // crawl | sitemap | feed
+	Pattern  bool     `json:"pattern,omitempty"`  // one row for a family of interchangeable item pages
+	Count    int      `json:"count,omitempty"`    // pages in the family
+	Examples []string `json:"examples,omitempty"` // a few member paths
 }
 
 type Tool struct {

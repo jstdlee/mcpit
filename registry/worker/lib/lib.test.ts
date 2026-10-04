@@ -345,3 +345,58 @@ describe('guide and site map', async () => {
     expect(metaChanged(withGuide('a'), pack([tool()]))).toBe(false);
   });
 });
+
+describe('site review', async () => {
+  const { repeatingFamilies } = await import('../review');
+  it('rejects literal URLs a template covers; quarantines literal families', async () => {
+    const { coveredBy } = await import('./gate');
+    const tpl = tool({
+      id: 'products_by_id',
+      request: { method: 'GET', url: 'https://shop.example.com/api/products/{{id}}' },
+    });
+    const lit = tool({
+      id: 'products_981',
+      request: { method: 'GET', url: 'https://shop.example.com/api/products/981' },
+    });
+    expect(coveredBy(lit, [tpl, lit])).toBe('products_by_id');
+    expect(coveredBy(tpl, [tpl, lit])).toBeUndefined();
+    const word = tool({
+      id: 'products_search',
+      request: { method: 'GET', url: 'https://shop.example.com/api/products/search' },
+    });
+    expect(coveredBy(word, [tpl, word])).toBeUndefined();
+    expect(
+      decideTool(gate({ diff: { id: 'products_981', change: 'added', candidate: lit }, coveredBy: 'products_by_id' }))
+        .verdict,
+    ).toBe('reject');
+    expect(decideTool(gate({ repeating: '3 similar tools' })).verdict).toBe('quarantine');
+    expect(
+      decideTool(
+        gate({ diff: { id: 'products_981', change: 'unchanged', candidate: lit }, coveredBy: 'products_by_id' }),
+      ).verdict,
+    ).toBe('retire');
+  });
+  it('finds tools that differ only in one literal path segment', () => {
+    const mk = (id: string, url: string) => tool({ id, request: { method: 'GET', url } });
+    const fam = repeatingFamilies([
+      mk('crates_axmg', 'https://crates.io/api/v1/crates/axmg'),
+      mk('crates_serde', 'https://crates.io/api/v1/crates/serde'),
+      mk('crates_tokio', 'https://crates.io/api/v1/crates/tokio'),
+      mk('find_crate', 'https://crates.io/api/v1/crates/{{name}}/owners'),
+      mk('summary', 'https://crates.io/api/v1/summary'),
+    ]);
+    expect([...fam.keys()].sort()).toEqual(['crates_axmg', 'crates_serde', 'crates_tokio']);
+  });
+  it('finds a family next to other paths under the same prefix', () => {
+    const mk = (id: string, url: string) => tool({ id, request: { method: 'GET', url } });
+    const fam = repeatingFamilies([
+      mk('products_by_id', 'https://shop.example.com/api/products/{{id}}'),
+      mk('products', 'https://shop.example.com/api/products'),
+      mk('catalog_lamps', 'https://shop.example.com/api/catalog/lamps'),
+      mk('catalog_tables', 'https://shop.example.com/api/catalog/tables'),
+      mk('catalog_chairs', 'https://shop.example.com/api/catalog/chairs'),
+      mk('manage_account', 'https://shop.example.com/api/manage/account'),
+    ]);
+    expect([...fam.keys()].sort()).toEqual(['catalog_chairs', 'catalog_lamps', 'catalog_tables']);
+  });
+});

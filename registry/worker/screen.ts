@@ -9,6 +9,7 @@ import {
   diffPacks,
   mergeTools,
   metaChanged,
+  coveredBy,
   summarize,
   type ModelView,
   type ReplayResult,
@@ -17,6 +18,7 @@ import {
 import { replay } from './lib/replay';
 import { riskyTools, scan } from './lib/scan';
 import { GUIDE_DOCS, type Pack, type Tool } from './lib/sitepack';
+import { repeatingFamilies } from './review';
 
 interface SubmissionRow {
   id: string;
@@ -55,6 +57,9 @@ export async function screenSubmission(
 
   const findings = scan(pack, { allowPrivate: env.ALLOW_PRIVATE === 'true' });
   const risky = riskyTools(findings);
+  // Repetition facts: literal item endpoints covered by a template, or families without one.
+  const everyTool = [...(active?.parsed.tools ?? []), ...pack.tools];
+  const families = repeatingFamilies(everyTool);
   const diff = diffPacks(active?.parsed ?? null, pack);
   const fp = (p?: Pack) => (p ? `${p.fingerprint?.domHash ?? ''}|${p.fingerprint?.apiHash ?? ''}` : '');
   const fingerprintChanged = !!active && fp(active.parsed) !== fp(pack) && fp(pack) !== '|';
@@ -208,6 +213,9 @@ export async function screenSubmission(
           }
         : decideTool({
             broken: brokenReason(recheck.get(d.id)),
+            // A new tool is checked against every tool; a live one (retire) only against live templates.
+            coveredBy: coveredBy(d.candidate, d.change === 'added' ? everyTool : (active?.parsed.tools ?? [])),
+            repeating: families.has(d.id) ? `${families.get(d.id)!.length} similar tools` : undefined,
             diff: d,
             risky: risky.has(d.id),
             fingerprintChanged,

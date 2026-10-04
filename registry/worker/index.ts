@@ -8,6 +8,8 @@ import { activeVersion, audit, now, publish, registryKey, setting, settingNum } 
 import { diffPacks, mergeTools, metaChanged } from './lib/gate';
 import { hard, scan } from './lib/scan';
 import { packHash, validate, type Pack, type Tool } from './lib/sitepack';
+import { clefDecider } from './lib/clef';
+import { applyBatch, buildReview } from './review';
 
 export { ScreeningAgent };
 
@@ -519,6 +521,29 @@ route('POST', '/v1/admin/quarantine/:id', async (req, env, [id]) => {
     .run();
   await audit(env, 'moderator', 'quarantine.' + action, `${q.origin} ${q.tool_id}`, published);
   return json({ ok: true, published });
+});
+
+// Site-level batch review: checklist + decision-model suggestions, then batch apply.
+route('GET', '/v1/admin/review', async (req, env) => {
+  admin(req, env);
+  const rows = await env.DB.prepare(
+    "SELECT origin, COUNT(*) AS n, SUM(CASE WHEN tool_id = '_guide' THEN 1 ELSE 0 END) AS guides FROM quarantine WHERE state = 'open' GROUP BY origin ORDER BY n DESC",
+  ).all();
+  return json({ sites: rows.results });
+});
+
+route('GET', '/v1/admin/review/:origin', async (req, env, [origin]) => {
+  admin(req, env);
+  return json(await buildReview(env, origin, clefDecider(env.AI, env.DECISION_MODEL)));
+});
+
+route('POST', '/v1/admin/review/:origin', async (req, env, [origin]) => {
+  admin(req, env);
+  const b = (await req.json()) as { approve?: number[]; reject?: number[] };
+  const approve = (b.approve ?? []).map(Number).filter(Number.isFinite);
+  const reject = (b.reject ?? []).map(Number).filter(Number.isFinite);
+  if (approve.some((id) => reject.includes(id))) throw new HttpError(400, 'an item cannot be approved and rejected');
+  return json(await applyBatch(env, origin, approve, reject));
 });
 
 route('GET', '/v1/admin/submissions', async (req, env) => {
