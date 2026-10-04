@@ -13,7 +13,10 @@ import (
 )
 
 //go:embed SKILL.md
-var Skill string
+var skillRaw string
+
+// Skill is the agent skill, always with LF line endings (Windows checkouts may add CRLF).
+var Skill = strings.ReplaceAll(skillRaw, "\r\n", "\n")
 
 // Agent describes where one agent keeps MCP servers and skills.
 type Agent struct {
