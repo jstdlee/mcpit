@@ -12,7 +12,7 @@
     {
       "binding": "DB",
       "database_name": "mcpit",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "90e8d1d8-f4d4-4935-971c-778bad2de852",
       "migrations_dir": "migrations",
     },
   ],
@@ -20,6 +20,8 @@
   "durable_objects": { "bindings": [{ "name": "SCREENER", "class_name": "ScreeningAgent" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ScreeningAgent"] }],
   "triggers": { "crons": ["17 3 * * *"] },
-  "vars": { "PUBLIC_URL": "https://tomcp.ohmyai.xyz", "DECISION_MODEL": "@cf/cloudflare/clef-flash" },
+  "vars": { "PUBLIC_URL": "https://mcpit-registry.jstdlee.workers.dev", "DECISION_MODEL": "@cf/cloudflare/clef-flash" },
   "observability": { "enabled": true },
+  "workers_dev": true,
+  "preview_urls": false,
 }

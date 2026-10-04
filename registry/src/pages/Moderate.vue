@@ -10,6 +10,7 @@ const tabs = [
   ['quarantine', 'Quarantine'],
   ['sites', 'Sites'],
   ['submissions', 'Submissions'],
+  ['verifier', 'Verifier'],
   ['settings', 'Settings'],
   ['audit', 'Audit log'],
 ];
@@ -25,6 +26,7 @@ const settings = ref<Record<string, string>>({});
 const model = ref('');
 const keyFilter = ref('pending');
 const busy = ref(false);
+const vstats = ref<any[]>([]);
 
 async function signIn() {
   setToken(tokenInput.value.trim());
@@ -51,6 +53,11 @@ async function load() {
     if (tab.value === 'sites') rows.value = (await api('/v1/admin/sites', { admin: true })).sites;
     if (tab.value === 'submissions') rows.value = (await api('/v1/admin/submissions', { admin: true })).submissions;
     if (tab.value === 'audit') rows.value = (await api('/v1/admin/audit', { admin: true })).audit;
+    if (tab.value === 'verifier') {
+      const v = await api('/v1/admin/verifier', { admin: true });
+      vstats.value = v.stats;
+      rows.value = v.decisions;
+    }
     if (tab.value === 'settings') {
       const s = await api('/v1/admin/settings', { admin: true });
       settings.value = s.settings;
@@ -385,6 +392,51 @@ const labels: Record<string, string> = {
                 </td>
                 <td class="small">{{ s.reason }}</td>
                 <td class="hide-sm mono small">{{ s.key_id }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <!-- verifier -->
+      <template v-if="tab === 'verifier'">
+        <div class="body muted small">
+          The LLM verifier checks every escalated decision and a sample of the rest. It never changes a decision;
+          disagreements show first.
+        </div>
+        <div v-if="vstats.length" class="body row">
+          <span v-for="s in vstats" :key="s.point" class="pill grey"
+            >{{ s.point }}: {{ s.agreed }}/{{ s.checked }} agree</span
+          >
+        </div>
+        <div v-if="!rows.length" class="empty">No checked decisions yet.</div>
+        <div v-else class="scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Point</th>
+                <th>Clef-flash</th>
+                <th>Verifier</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="d in rows" :key="d.id">
+                <td>
+                  {{ host(d.origin) }} <code>{{ d.subject }}</code>
+                </td>
+                <td>
+                  <code>{{ d.point }}</code>
+                </td>
+                <td>{{ d.answer }}</td>
+                <td>
+                  <span class="pill" :class="d.verify_agree ? 'ok' : 'bad'">{{
+                    d.verify_agree ? 'agrees' : 'disagrees'
+                  }}</span>
+                  {{ d.verify_answer }}
+                </td>
+                <td class="small">{{ d.verify_reason }}</td>
               </tr>
             </tbody>
           </table>

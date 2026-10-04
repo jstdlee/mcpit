@@ -108,10 +108,11 @@ export async function logDecision(
     answer?: string;
     probs?: unknown;
     action?: string;
+    state?: unknown;
   },
 ) {
   await env.DB.prepare(
-    'INSERT INTO decisions (submission_id, origin, point, subject, model, answer, probs, action, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO decisions (submission_id, origin, point, subject, model, answer, probs, action, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
     .bind(
       d.submission ?? null,
@@ -122,6 +123,7 @@ export async function logDecision(
       d.answer ?? null,
       d.probs ? JSON.stringify(d.probs) : null,
       d.action ?? null,
+      d.state ? JSON.stringify(d.state).slice(0, 4000) : null,
       now(),
     )
     .run();

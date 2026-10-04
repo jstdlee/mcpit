@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jstdlee/mcpit/cli/internal/decide"
@@ -74,7 +75,10 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	if !e.Opts.NoBrowser {
 		pages, err = e.crawl(ctx, seed)
 		if err != nil && len(pages) == 0 {
-			return nil, err
+			if len(cands) == 0 {
+				return nil, err
+			}
+			e.say("crawl failed (%v); keeping %d tools from published specs", err, len(cands))
 		}
 	}
 
@@ -110,6 +114,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	}
 
 	cands = dedupe(cands)
+	cands = e.decideUseful(ctx, cands)
 	e.decideParamRoles(ctx, cands)
 	e.decideEffects(ctx, cands)
 
@@ -117,6 +122,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	for _, c := range cands {
 		c.finish(e.ProbeText)
 		t := c.tool
+		t.ID = safeID(t.ID)
 		base := t.ID
 		if n := ids[base]; n > 0 {
 			t.ID = fmt.Sprintf("%s_%d", base, n+1)
@@ -142,6 +148,7 @@ func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error
 	defer cap.Close()
 	cap.ProbeText = e.ProbeText
 	seenTpl := map[string]bool{templateOf(seed): true}
+	shapes := map[string]int{shapeOf(seed): 1}
 	level := []string{seed}
 	var pages []*PageResult
 	var firstErr error
@@ -167,8 +174,9 @@ func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error
 			for _, l := range p.Links {
 				l = stripFragment(l)
 				tpl := templateOf(l)
-				if e.sameOrigin(l) && !seenTpl[tpl] {
+				if e.sameOrigin(l) && !seenTpl[tpl] && shapes[shapeOf(l)] < 2 {
 					seenTpl[tpl] = true
+					shapes[shapeOf(l)]++
 					next = append(next, l)
 				}
 			}
@@ -183,14 +191,15 @@ func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error
 
 // candidate is a tool under construction.
 type candidate struct {
-	tool       sitepack.Tool
-	params     []*param
-	observed   int
-	effectFact string
-	formKind   string
-	sampleBody string
-	source     string
-	key        string
+	tool          sitepack.Tool
+	params        []*param
+	observed      int
+	effectFact    string
+	formKind      string
+	sampleBody    string
+	samplePreview string
+	source        string
+	key           string
 }
 
 type param struct {
@@ -351,6 +360,9 @@ func (e *Explorer) fromNetwork(entries []*NetEntry) []*candidate {
 			order = append(order, key)
 		}
 		c.observed++
+		if c.samplePreview == "" {
+			c.samplePreview = n.Preview
+		}
 		for _, pp := range pathParams {
 			p := c.param(pp.name)
 			p.in, p.roleFact = "path", "id"
@@ -409,8 +421,11 @@ func (e *Explorer) fromNetwork(entries []*NetEntry) []*candidate {
 
 // fromForm builds a tool from a DOM form. Login and signup forms never become tools.
 func (e *Explorer) fromForm(f Form, kind string) *candidate {
-	if kind == "login" || kind == "signup" {
+	if kind == "login" || kind == "signup" || kind == "settings" {
 		return nil
+	}
+	if !hasUserInput(f) {
+		return nil // fact: no field a user fills in (buttons, display radios, hidden only)
 	}
 	u, err := url.Parse(f.Action)
 	if err != nil {
@@ -494,6 +509,22 @@ func (c *candidate) paramsWithRole(role string) []*param {
 	return out
 }
 
+// hasUserInput: the form has a text-like field or a select; radio/checkbox-only forms
+// that post back to the same page are display preferences.
+func hasUserInput(f Form) bool {
+	choices := 0
+	for _, fd := range f.Fields {
+		switch fd.Type {
+		case "hidden", "submit", "button", "reset", "image":
+		case "radio", "checkbox":
+			choices++
+		default:
+			return true
+		}
+	}
+	return choices > 0 && stripQuery(f.Action) != stripQuery(f.Page)
+}
+
 func looksLikeToken(name, value string) bool {
 	n := strings.ToLower(name)
 	if regexp.MustCompile(`csrf|token|nonce|authenticity|xsrf|__requestverification`).MatchString(n) {
@@ -548,30 +579,46 @@ func graphqlOpFromBody(b any) string {
 	return ""
 }
 
-// verify runs each read tool's probe twice and keeps tools that answer.
+// verify runs read probes twice (4 tools at a time, at most 20 tools) and keeps tools that answer.
 func (e *Explorer) verify(ctx context.Context, origin string, tools []sitepack.Tool) []sitepack.Tool {
-	var out []sitepack.Tool
-	for _, t := range tools {
+	out := append([]sitepack.Tool(nil), tools...)
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	n := 0
+	for i := range out {
+		t := &out[i]
 		if t.Probe == nil || t.Effect != "read" {
-			out = append(out, t)
 			continue
 		}
-		ok := 0
-		for i := 0; i < 2; i++ {
-			r, err := execute.Call(ctx, e.HTTP, origin, &t, t.Probe.Args, execute.Options{})
-			if err == nil && r.Status == t.Probe.Expect.Status {
-				ok++
-			}
+		if n >= 20 {
+			break
 		}
-		e.say("verify %s: %d/2", t.ID, ok)
-		if ok == 0 {
-			t.Probe = nil
-			if t.Evidence != nil {
-				t.Evidence.Confidence = 0.3
+		n++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ok := 0
+			for k := 0; k < 2; k++ {
+				r, err := execute.Call(ctx, e.HTTP, origin, t, t.Probe.Args, execute.Options{})
+				if err == nil && r.Status == t.Probe.Expect.Status {
+					ok++
+				}
 			}
-		}
-		out = append(out, t)
+			mu.Lock()
+			e.say("verify %s: %d/2", t.ID, ok)
+			mu.Unlock()
+			if ok == 0 {
+				t.Probe = nil
+				if t.Evidence != nil {
+					t.Evidence.Confidence = 0.3
+				}
+			}
+		}()
 	}
+	wg.Wait()
 	return out
 }
 
@@ -661,7 +708,7 @@ func (e *Explorer) get(ctx context.Context, u, want string) []byte {
 	if err != nil {
 		return nil
 	}
-	req.Header.Set("User-Agent", "mcpit/0.1 (+https://tomcp.ohmyai.xyz)")
+	req.Header.Set("User-Agent", "mcpit/0.1 (+https://mcpit-registry.jstdlee.workers.dev)")
 	resp, err := e.HTTP.Do(req)
 	if err != nil {
 		return nil
@@ -869,6 +916,25 @@ func templateOf(raw string) string {
 	return u.Host + p + "?" + strings.Join(keys, "&")
 }
 
+// shapeOf keeps the first path segment and the segment count: /people/a/lists/b and
+// /people/c/lists/d share a shape, so only two pages of it are visited.
+func shapeOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(segs) <= 1 {
+		return templateOf(raw)
+	}
+	var keys []string
+	for k := range u.Query() {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return fmt.Sprintf("%s/%s/%d?%s", u.Host, segs[0], len(segs), strings.Join(keys, "&"))
+}
+
 func braces(p string) string {
 	return regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`).ReplaceAllString(p, "{{$1}}")
 }
@@ -900,6 +966,21 @@ func toolID(method, path, op string) string {
 		id = "t_" + id
 	}
 	return clip(id, 60)
+}
+
+// safeID makes any name a valid tool id: ^[a-z][a-z0-9_]{0,63}$.
+func safeID(s string) string {
+	s = snake(s)
+	if s == "" {
+		s = "tool"
+	}
+	if s[0] < 'a' || s[0] > 'z' {
+		s = "t_" + s
+	}
+	if len(s) > 58 { // leave room for a _N suffix
+		s = strings.TrimRight(s[:58], "_")
+	}
+	return s
 }
 
 func formToolID(kind, path string) string {

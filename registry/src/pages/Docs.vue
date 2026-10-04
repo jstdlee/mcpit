@@ -31,7 +31,7 @@ mcpit call example.com search --args '{"q":"lamp"}'</pre>
     <div class="head"><h2>3. Share a sitepack</h2></div>
     <div class="body">
       <pre class="note">
-mcpit config set registry {{ base }}
+mcpit config set registry {{ base }}   (default: https://mcpit-registry.jstdlee.workers.dev)
 mcpit key init          # a moderator approves new device keys
 mcpit submit example.com
 mcpit status &lt;id&gt;</pre>

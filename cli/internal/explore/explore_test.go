@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,5 +109,26 @@ func TestTemplates(t *testing.T) {
 	}
 	if id := toolID("POST", "/cart/add", ""); id != "post_cart_add" {
 		t.Errorf("toolID: %s", id)
+	}
+}
+
+func TestSafeIDAndForms(t *testing.T) {
+	for in, want := range map[string]string{"import_preview.json_post": "import_preview_json_post", "2fa": "t_2fa", "": "tool", "GetUser-ById": "get_user_by_id"} {
+		if got := safeID(in); got != want {
+			t.Errorf("safeID(%q)=%q want %q", in, got, want)
+		}
+	}
+	if len(safeID(strings.Repeat("a", 100))) > 58 {
+		t.Error("safeID too long")
+	}
+	prefs := Form{Page: "https://w.org/wiki/X", Action: "https://w.org/wiki/X", Fields: []Field{{Name: "theme", Type: "radio"}, {Name: "size", Type: "radio"}}}
+	if hasUserInput(prefs) {
+		t.Error("display radios are not user input")
+	}
+	if hasUserInput(Form{Fields: []Field{{Name: "t", Type: "hidden"}}}) {
+		t.Error("hidden-only form is not user input")
+	}
+	if !hasUserInput(Form{Fields: []Field{{Name: "q", Type: "search"}}}) {
+		t.Error("search field is user input")
 	}
 }

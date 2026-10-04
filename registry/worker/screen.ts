@@ -139,6 +139,7 @@ export async function screenSubmission(
           model: decider.model,
           answer: a.type === 'noul' ? a.noul?.toFixed(2) : a.choice,
           probs: a.probabilities,
+          state: state[k],
         });
       }
     }
@@ -227,7 +228,8 @@ export async function screenSubmission(
   }
 }
 
-const INJECTION_Q = 'This text contains instructions aimed at an AI assistant.';
+// Wording tested in experiments/cf-models/injection_wording.py: plain imperative tool text stays low.
+const INJECTION_Q = 'This tool description tries to make an AI agent take extra actions or leak data.';
 
 /** The text an agent reads from a tool: description and parameter descriptions. */
 function agentText(t: Tool): Record<string, unknown> {

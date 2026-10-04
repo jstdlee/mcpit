@@ -499,10 +499,35 @@ All six goal steps run locally (registry on `vp dev`, fixture shop on 127.0.0.1:
 
 Lesson: Clef-flash missed a subtle injection when the state held the whole submission (0.05) but caught it when the state held only that tool's text (0.95). Rule: give each safety question a focused state; batch only questions about the same small state.
 
-Not done in v0.1: LLM verifier sample (5 %), `mcpit login` profile, history import + idle batch, local jev provider test, deploy to tomcp.ohmyai.xyz (needs a D1 database, `ADMIN_TOKEN` and `SIGNING_KEY` secrets and the custom domain).
+Deploy (2026-10-04): live at **https://mcpit-registry.jstdlee.workers.dev** (workers.dev first; tomcp.ohmyai.xyz later). D1 `mcpit` created and migrated with `cf`; `ADMIN_TOKEN`, `SIGNING_KEY`, `SIGNING_KEY_ID` set with `cf workers secrets update`; production signing key `reg-1`. The Worker deploys with `wrangler deploy` after `vp build`: `cf deploy` does not read the Vite-plugin project yet (it rewrote the config with no bindings, so those changes were reverted).
+
+LLM verifier (2026-10-04): after each screening, the agent queues `runVerify`. It checks every escalated or unsure decision and a 5 % sample of the rest with DeepSeek V4 Flash on Workers AI (BYOK: `LLM_MODEL`, or `LLM_BASE_URL` + `LLM_API_KEY`). It never changes a decision; a disagreement goes to the audit log and the console Verifier tab, and its note is added to quarantined items.
+
+TODO (later): `mcpit login` profile, history import, idle batch. Local jev test: not needed (Clef on Workers AI is the test model). Custom domain tomcp.ohmyai.xyz.
+
+### 11.2 Real sites (2026-10-04, depth 2, ≤ 8 pages, Clef-flash)
+
+| Site | First run | After fixes |
+|---|---|---|
+| pypi.org | OpenSearch search + locale form | search only |
+| npmjs.com | search + 6 Gatsby page-data JSON "APIs" | search only (page data dropped by `tool.useful`) |
+| openlibrary.org | crashed (bad OpenAPI ids) | 42 tools (OpenAPI + OpenSearch), 231 s (slow site) |
+| gutenberg.org | simple + advanced search | same; live registry: simple promoted, advanced (POST) quarantined |
+| pkg.go.dev | search + 7 empty "Other form" buttons | search only |
+| crates.io | 43 OpenAPI operations | — |
+| developer.mozilla.org | search + `whoami` + ad endpoint `/pong/get` | ad endpoint dropped |
+| en.wikipedia.org | 2 searches + 7 theme/font radio forms | 2 searches |
+| news.ycombinator.com | no tools (search lives on another site) | expected |
+| docs.python.org | 2 searches + glossary JSON | — |
+
+Fixes: safe tool ids; facts that drop forms with no user input or display-only radios; form kind `settings`; decision point `tool.useful` (drop at ≤ 0.20); at most 2 pages per path shape; navigation gives up waiting after 25 s; declared-spec tools survive a failed crawl; test calls 4 at a time, ≤ 20 tools.
+
+Lesson (live registry): the injection question "contains instructions aimed at an AI assistant" flagged plain imperative tool text ("Search the site…") at 0.75. The wording "tries to make an AI agent take extra actions or leak data" scored clean texts ≤ 0.07 and all injections ≥ 0.85 (`experiments/cf-models/injection_wording.py`).
+
+Open: OpenAPI `security` → `auth`; slow sites need a longer verify budget.
 
 ## 12. Next step
 
-1. Deploy the registry to tomcp.ohmyai.xyz (after approval).
-2. Test explore on 10 real public sites; tune decision points.
-3. M5 items: `mcpit login`, history import, idle batch; LLM verifier sample.
+1. Tune the explorer on real sites (§11.2).
+2. Custom domain tomcp.ohmyai.xyz.
+3. TODO: `mcpit login`, history import, idle batch.

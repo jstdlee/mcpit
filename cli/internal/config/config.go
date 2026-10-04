@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-const DefaultRegistry = "https://tomcp.ohmyai.xyz"
+const DefaultRegistry = "https://mcpit-registry.jstdlee.workers.dev"
 
 type Config struct {
 	Registry string  `json:"registry,omitempty"`

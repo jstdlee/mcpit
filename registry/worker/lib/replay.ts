@@ -74,7 +74,7 @@ function guard(origin: string, raw: string) {
 }
 
 function ua() {
-  return { 'user-agent': 'mcpit-registry/0.1 (+https://tomcp.ohmyai.xyz)' };
+  return { 'user-agent': 'mcpit-registry/0.1 (+https://mcpit-registry.jstdlee.workers.dev)' };
 }
 
 async function timed(fetcher: typeof fetch, url: string, init: RequestInit, ms: number): Promise<Response> {

@@ -193,7 +193,17 @@ func (c *Capturer) Visit(parent context.Context, pageURL string, act bool) (*Pag
 		_, err := chromedp.Call(ctx, network.Enable, network.EnableParams{})
 		return err
 	})
-	if err := chromedp.Do(ctx, enable, chromedp.Navigate(pageURL), chromedp.Sleep(c.Wait)); err != nil {
+	if err := chromedp.Do(ctx, enable); err != nil {
+		return nil, err
+	}
+	// Heavy pages may never fire "load": wait at most 25 s, then read the page as it is.
+	navCtx, cancelNav := context.WithTimeout(ctx, 25*time.Second)
+	navErr := chromedp.Do(navCtx, chromedp.Navigate(pageURL))
+	cancelNav()
+	if navErr != nil && ctx.Err() != nil {
+		return nil, navErr
+	}
+	if err := chromedp.Do(ctx, chromedp.Sleep(c.Wait)); err != nil {
 		return nil, err
 	}
 	dom, err := chromedp.Run(ctx, chromedp.Evaluate[domResult](domJS))

@@ -30,6 +30,7 @@ var formKindOptions = [][2]string{
 	{"contact", "Sends a message to the site owner."},
 	{"comment", "Posts a comment or review."},
 	{"subscribe", "Signs up for a newsletter or alerts."},
+	{"settings", "Changes how the page looks or its language: theme, font size, locale, cookie consent."},
 	{"other", "Anything else."},
 }
 
@@ -353,6 +354,46 @@ func ruleRankLinks(links []string) []string {
 		for j := i; j > 0 && score(out[j]) > score(out[j-1]); j-- {
 			out[j], out[j-1] = out[j-1], out[j]
 		}
+	}
+	return out
+}
+
+// decideUseful asks tool.useful for found (not declared) tools: would an agent call it
+// for a user task? It drops page-data bundles, ad and telemetry endpoints and UI forms.
+func (e *Explorer) decideUseful(ctx context.Context, cands []*candidate) []*candidate {
+	if !e.D.Available() {
+		return cands
+	}
+	qs := map[string]decide.Question{}
+	subj := map[string]string{}
+	tools := map[string]any{}
+	for i, c := range cands {
+		if c.source == "openapi" || c.source == "opensearch" {
+			continue // declared by the site
+		}
+		if c.formKind != "" && c.formKind != "other" && c.formKind != "filter" {
+			continue // form.kind already decided what this form is for
+		}
+		id := fmt.Sprintf("t%d", i)
+		tools[id] = map[string]any{"method": c.tool.Request.Method, "url": c.tool.Request.URL, "params": c.paramNames(), "form": c.formKind, "sample": clip(c.samplePreview, 160)}
+		qs[id] = decide.Noul("Tool " + id + " gives an agent content or an action a user of this site would want. Page data bundles, analytics, ads, account status checks and display settings do not count.")
+		subj[id] = c.tool.Request.Method + " " + c.tool.Request.URL
+	}
+	if len(qs) == 0 {
+		return cands
+	}
+	ans, err := e.D.Ask(ctx, "tool.useful", map[string]any{"site": e.origin, "tools": tools}, qs, subj)
+	if err != nil {
+		return cands
+	}
+	var out []*candidate
+	for i, c := range cands {
+		a, asked := ans[fmt.Sprintf("t%d", i)]
+		if asked && a.Noul <= 0.2 {
+			e.say("drop %s %s (tool.useful %.2f)", c.tool.Request.Method, c.tool.Request.URL, a.Noul)
+			continue
+		}
+		out = append(out, c)
 	}
 	return out
 }

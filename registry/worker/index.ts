@@ -474,6 +474,17 @@ route('GET', '/v1/admin/decisions', async (req, env) => {
   return json({ decisions: rows.results });
 });
 
+route('GET', '/v1/admin/verifier', async (req, env) => {
+  admin(req, env);
+  const stats = await env.DB.prepare(
+    'SELECT point, COUNT(*) AS checked, SUM(verify_agree) AS agreed FROM decisions WHERE verify_model IS NOT NULL GROUP BY point',
+  ).all();
+  const rows = await env.DB.prepare(
+    'SELECT id, origin, subject, point, model, answer, verify_model, verify_agree, verify_answer, verify_reason, verified_at FROM decisions WHERE verify_model IS NOT NULL ORDER BY verify_agree ASC, id DESC LIMIT 200',
+  ).all();
+  return json({ stats: stats.results, decisions: rows.results });
+});
+
 route('GET', '/v1/admin/sites', async (req, env) => {
   admin(req, env);
   const rows = await env.DB.prepare('SELECT * FROM sites ORDER BY updated_at DESC LIMIT 500').all();
