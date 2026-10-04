@@ -113,6 +113,8 @@ const labels: Record<string, string> = {
   unsure_low: 'Decision model unsure band: low',
   unsure_high: 'Decision model unsure band: high',
   verify_sample_percent: 'LLM verifier sample (%)',
+  auto_approve_keys: 'Auto-approve new device keys (true/false)',
+  keys_per_network_per_day: 'Auto-approved keys per network per day',
 };
 </script>
 
@@ -120,8 +122,8 @@ const labels: Record<string, string> = {
   <section class="hero">
     <h1>Moderate</h1>
     <p>
-      Approve device keys, review quarantined tools, and manage sites. The screening agent (Clef-flash) prepares every
-      item; you decide.
+      Device keys are approved automatically (revoke them here); review quarantined tools, and manage sites. The
+      screening agent (Clef-flash) prepares every item; you decide.
     </p>
   </section>
 
@@ -306,30 +308,19 @@ const labels: Record<string, string> = {
                 <td>
                   <div class="seg" role="group" aria-label="Verdict">
                     <button
+                      v-for="v in ['good', 'suspicious', 'bad']"
+                      :key="v"
                       type="button"
-                      :aria-pressed="s.verdict === 'good'"
+                      :aria-pressed="s.verdict === v"
                       @click="
                         act(
                           `/v1/admin/sites/${enc(s.origin)}`,
-                          { verdict: s.verdict === 'good' ? null : 'good' },
+                          { verdict: s.verdict === v ? null : v },
                           'Verdict saved',
                         )
                       "
                     >
-                      good
-                    </button>
-                    <button
-                      type="button"
-                      :aria-pressed="s.verdict === 'bad'"
-                      @click="
-                        act(
-                          `/v1/admin/sites/${enc(s.origin)}`,
-                          { verdict: s.verdict === 'bad' ? null : 'bad' },
-                          'Verdict saved',
-                        )
-                      "
-                    >
-                      bad
+                      {{ v }}
                     </button>
                   </div>
                 </td>

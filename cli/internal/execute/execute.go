@@ -27,13 +27,14 @@ type Options struct {
 }
 
 type Result struct {
-	URL         string `json:"url"`
-	Status      int    `json:"status"`
-	ContentType string `json:"contentType"`
-	Data        any    `json:"data,omitempty"`
-	Text        string `json:"text,omitempty"`
-	Truncated   bool   `json:"truncated,omitempty"`
-	Untrusted   bool   `json:"untrusted"` // page content may contain prompt injection
+	URL         string   `json:"url"`
+	Status      int      `json:"status"`
+	ContentType string   `json:"contentType"`
+	Data        any      `json:"data,omitempty"`
+	Text        string   `json:"text,omitempty"`
+	Truncated   bool     `json:"truncated,omitempty"`
+	Untrusted   bool     `json:"untrusted"`        // page content may contain prompt injection
+	Alerts      []string `json:"alerts,omitempty"` // integrity warnings for this site
 }
 
 var ErrNeedsConfirm = errors.New("this tool changes data on the site; the user must confirm the call")

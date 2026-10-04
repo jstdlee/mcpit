@@ -23,7 +23,7 @@ const outcomePill = (o: string) =>
 const guide = computed(() => data.value?.guide ?? null);
 const pages = computed<any[]>(() => data.value?.pages ?? []);
 const guideDocs = computed(() =>
-  ['llms', 'agentCard', 'apiCatalog', 'aiPlugin', 'mcp', 'robots']
+  ['llms', 'agentCard', 'apiCatalog', 'aiPlugin', 'mcp', 'jsonLd', 'securityTxt', 'robots']
     .filter((k) => guide.value?.[k])
     .map((k) => ({ name: k, doc: guide.value[k] })),
 );
@@ -117,6 +117,21 @@ const params = (t: any) => Object.keys(t.inputSchema?.properties ?? {}).join(', 
       </div>
       <div class="body" style="display: grid; gap: 10px">
         <p v-if="guide.description" style="margin: 0">{{ guide.description }}</p>
+        <div v-if="guide.meta" class="row small">
+          <span v-for="(v, k) in guide.meta" :key="k" class="pill grey">{{ k }}: {{ String(v).slice(0, 60) }}</span>
+        </div>
+        <div v-if="guide.feeds?.length" class="small">
+          Feeds:
+          <a
+            v-for="f in guide.feeds"
+            :key="f.url"
+            :href="f.url"
+            target="_blank"
+            rel="noopener"
+            style="margin-right: 10px"
+            >{{ f.title || f.url }} ({{ f.items }})</a
+          >
+        </div>
         <details v-for="d in guideDocs" :key="d.name">
           <summary>
             <code>{{ d.name }}</code> <a :href="d.doc.url" target="_blank" rel="noopener">{{ d.doc.url }}</a>

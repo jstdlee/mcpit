@@ -110,6 +110,10 @@ func (a *App) Pull(ctx context.Context, site string) (*sitepack.Pack, error) {
 	if err := a.Registry.VerifyPulled(ctx, pulled); err != nil {
 		return nil, fmt.Errorf("refused registry pack: %w", err)
 	}
+	if h, _ := pulled.Pack.Hash(); h != pulled.Hash {
+		return nil, fmt.Errorf("this mcpit cannot keep every field of the pack (hash %.12s vs %.12s): update mcpit", h, pulled.Hash)
+	}
+	a.Forget(origin)
 	p := pulled.Pack
 	p.Version = pulled.Version
 	p.Registry = &sitepack.RegistryRef{URL: a.Registry.Base, Hash: pulled.Hash, Signature: pulled.Signature, KeyID: pulled.KeyID, State: pulled.State}
@@ -138,10 +142,29 @@ func (a *App) Explore(ctx context.Context, url string, o explore.Options) (*site
 
 // Call runs one tool and reports an anonymous ok/fail counter for registry packs.
 func (a *App) Call(ctx context.Context, site, toolID string, args map[string]any, confirmed bool) (*execute.Result, error) {
+	r, _, err := a.CallChecked(ctx, site, toolID, args, confirmed, false)
+	return r, err
+}
+
+// CallChecked runs the integrity check first. A blocked site returns *BlockedError unless
+// override is true (the user confirmed after seeing the alerts).
+func (a *App) CallChecked(ctx context.Context, site, toolID string, args map[string]any, confirmed, override bool) (*execute.Result, *Integrity, error) {
 	p, _, err := a.Pack(ctx, site)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	p, in := a.Check(ctx, p)
+	if in.Level == "block" && !override {
+		return nil, in, &BlockedError{in}
+	}
+	r, err := a.call(ctx, p, toolID, args, confirmed)
+	if r != nil {
+		r.Alerts = in.Alerts
+	}
+	return r, in, err
+}
+
+func (a *App) call(ctx context.Context, p *sitepack.Pack, toolID string, args map[string]any, confirmed bool) (*execute.Result, error) {
 	t := p.Tool(toolID)
 	if t == nil {
 		return nil, fmt.Errorf("site %s has no tool %q", p.Origin, toolID)

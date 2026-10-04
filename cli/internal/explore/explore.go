@@ -42,10 +42,12 @@ type Explorer struct {
 	ProbeText string
 	HTTP      *http.Client
 	origin    string
-	robots    []string // disallowed path prefixes
+	robots    *Robots // robots.txt, RFC 9309
+	robotsTxt string
 	llmsHint  string
 	examples  map[string][]string // parameter examples from the guide
 	sitemap   []string
+	feedItems []feedItem
 }
 
 func New(d *decide.Decider, o Options) *Explorer {
@@ -171,10 +173,10 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 		pack.Tools = e.verify(ctx, origin, pack.Tools)
 	}
 	pack.Fingerprint = fingerprint(pages, pack.Tools)
-	pack.Pages = buildPages(pages, e.sitemap)
+	pack.Pages = buildPages(pages, e.sitemap, e.feedItems)
 	if guide != nil {
 		for _, p := range pages {
-			if p.MetaDesc != "" {
+			if p.MetaDesc != "" && guide.Description == "" {
 				guide.Description = p.MetaDesc
 				break
 			}
@@ -742,41 +744,21 @@ func (e *Explorer) declared(ctx context.Context) []*candidate {
 	return out
 }
 
+// readRobots fetches and parses robots.txt (RFC 9309) once.
 func (e *Explorer) readRobots(ctx context.Context) {
+	if e.robotsTxt != "" || e.robots != nil {
+		return
+	}
 	b := e.get(ctx, e.origin+"/robots.txt", "")
 	if b == nil {
 		return
 	}
-	applies := false
-	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
-		k, v, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		k, v = strings.ToLower(strings.TrimSpace(k)), strings.TrimSpace(v)
-		switch k {
-		case "user-agent":
-			applies = v == "*" || strings.Contains(strings.ToLower(v), "mcpit")
-		case "disallow":
-			if applies && v != "" {
-				e.robots = append(e.robots, v)
-			}
-		}
-	}
+	e.robotsTxt = string(b)
+	e.robots = ParseRobots(e.robotsTxt)
 }
 
 func (e *Explorer) allowed(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	for _, p := range e.robots {
-		if strings.HasPrefix(u.Path, p) {
-			return false
-		}
-	}
-	return true
+	return e.robots.Allowed("mcpit", raw)
 }
 
 func (e *Explorer) get(ctx context.Context, u, want string) []byte {

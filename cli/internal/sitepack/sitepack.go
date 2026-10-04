@@ -39,14 +39,25 @@ type Fingerprint struct {
 // Guide holds what the site publishes for crawlers and agents (robots.txt, llms.txt,
 // agent cards, API catalogs). Agents read it as guidance; the registry scans it.
 type Guide struct {
-	Description string    `json:"description,omitempty"` // meta description of the home page
-	Robots      *GuideDoc `json:"robots,omitempty"`
-	LLMs        *GuideDoc `json:"llms,omitempty"`
-	AgentCard   *GuideDoc `json:"agentCard,omitempty"`
-	APICatalog  *GuideDoc `json:"apiCatalog,omitempty"`
-	AIPlugin    *GuideDoc `json:"aiPlugin,omitempty"`
-	MCP         *GuideDoc `json:"mcp,omitempty"`
-	Sitemaps    []string  `json:"sitemaps,omitempty"`
+	Description string            `json:"description,omitempty"` // meta description of the home page
+	Robots      *GuideDoc         `json:"robots,omitempty"`
+	LLMs        *GuideDoc         `json:"llms,omitempty"`
+	AgentCard   *GuideDoc         `json:"agentCard,omitempty"`
+	APICatalog  *GuideDoc         `json:"apiCatalog,omitempty"`
+	AIPlugin    *GuideDoc         `json:"aiPlugin,omitempty"`
+	MCP         *GuideDoc         `json:"mcp,omitempty"`
+	JSONLD      *GuideDoc         `json:"jsonLd,omitempty"`      // schema.org JSON-LD of the home page
+	SecurityTxt *GuideDoc         `json:"securityTxt,omitempty"` // RFC 9116
+	Meta        map[string]string `json:"meta,omitempty"`        // canonical, lang, og:*, twitter:*
+	Feeds       []Feed            `json:"feeds,omitempty"`       // RSS 2.0 / Atom
+	Sitemaps    []string          `json:"sitemaps,omitempty"`
+}
+
+// Feed is an RSS or Atom feed the site publishes.
+type Feed struct {
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+	Items int    `json:"items"`
 }
 
 type GuideDoc struct {

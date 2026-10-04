@@ -1,7 +1,7 @@
 // Static security scan: cheap rules that run at submit time, before any model call.
 // A "hard" finding rejects the submission; a "risky" finding sends a tool to the moderator.
 
-import type { Pack, Tool } from './sitepack';
+import { GUIDE_DOCS, type Pack, type Tool } from './sitepack';
 
 export interface Finding {
   tool?: string;
@@ -53,10 +53,9 @@ function scanGuide(pack: Pack, origin: URL): Finding[] {
   const out: Finding[] = [];
   const g = pack.guide;
   if (!g) return out;
-  const docs = Object.entries(g).filter(([, v]) => v && typeof v === 'object' && !Array.isArray(v)) as [
-    string,
-    { url: string; text: string },
-  ][];
+  const docs = GUIDE_DOCS.filter((k) => g[k]).map((k) => [k, g[k]!] as [string, { url: string; text: string }]);
+  for (const f of g.feeds ?? []) docs.push(['feed', { url: f.url, text: f.title ?? '' }]);
+  if (g.meta) docs.push(['meta', { url: pack.origin + '/', text: Object.values(g.meta).join(' ') }]);
   for (const [name, d] of docs) {
     try {
       if (siteOf(new URL(d.url).hostname) !== siteOf(origin.hostname))

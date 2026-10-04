@@ -538,6 +538,13 @@ Changes:
 
 sgbus result: 7 tools found (geocode, nearest, search, busstops, arrivals, OCR, voice) + guide + 6 pages in ~110 s. Live registry: version `.2` promoted 4 read tools + guide; OCR and voice (POST) quarantined; version `.3` promoted the improved site map only.
 
+### 11.4 Standards crawl, automatic keys, integrity on use (2026-10-04)
+
+- **Standards:** robots.txt per RFC 9309 (user-agent groups, `*` and `$`, longest match, allow wins ties; `Sitemap:` and `Llms:` lines); sitemaps.org (urlset, sitemap index, `.xml.gz`); RSS 2.0 and Atom feeds (announced `<link rel="alternate">` first, then `/rss.xml`, `/feed.xml`, `/atom.xml`, `/feed`, `/index.xml`; on-site items join the site map); HTML head (`lang`, description, keywords, canonical, `og:*`, `twitter:*`, `<link rel="llms">`); schema.org JSON-LD (a `WebSite` → `SearchAction` becomes a search tool); RFC 9116 `security.txt`; RFC 8615 well-known paths (api-catalog RFC 9727, agent.json, ai-plugin.json, mcp.json). All analyzed locally, then submitted; the registry validates and Clef-flash checks the new guide fields.
+- **Device keys:** approved automatically (`auto_approve_keys`), at most 5 new keys per network per day (`keys_per_network_per_day`); more wait for review; the moderator can revoke any key.
+- **Integrity on use (client):** before every use of a registry pack — local hash vs signed hash (tamper → blocked); registry status (cached 10 min, `GET /v1/sites/{origin}/status`): de-listed, `bad` or `suspicious` → blocked; expired → warning; a newer signed version → pulled and verified automatically. Local packs of a flagged site → warning. Blocked: CLI refuses unless `--force`; MCP returns an "MCPIT ALERT (blocked)" error result and asks the user by elicitation, or refuses without it; the server instructions tell agents to show the alert and wait for explicit confirmation.
+- **Moderator:** new verdict `suspicious` (good / suspicious / bad).
+
 ## 12. Next step
 
 1. Tune the explorer on real sites (§11.2).

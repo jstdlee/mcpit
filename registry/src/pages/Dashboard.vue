@@ -95,6 +95,7 @@ watch(q, () => {
               <RouterLink :to="'/site/' + enc(s.origin)">{{ host(s.origin) }}</RouterLink>
               <span v-if="s.verdict === 'good'" class="pill ok" style="margin-left: 6px">verified</span>
               <span v-if="s.state === 'expired'" class="pill warn" style="margin-left: 6px">expired</span>
+              <span v-if="s.verdict === 'suspicious'" class="pill bad" style="margin-left: 6px">suspicious</span>
             </td>
             <td class="hide-sm">{{ s.tools }}</td>
             <td>

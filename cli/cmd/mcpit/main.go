@@ -194,9 +194,27 @@ func cmdTools(ctx context.Context, a *app.App, args []string) error {
 	if err != nil {
 		return err
 	}
+	p, integ := a.Check(ctx, p)
 	fmt.Fprintf(os.Stderr, "source: %s\n", src)
+	printAlerts(integ)
 	printTools(p)
 	return nil
+}
+
+func printAlerts(in *app.Integrity) {
+	if in == nil {
+		return
+	}
+	if in.Updated != "" {
+		fmt.Fprintf(os.Stderr, "updated to registry version %s (signature ok)\n", in.Updated)
+	}
+	for _, a := range in.Alerts {
+		label := "WARNING"
+		if in.Level == "block" {
+			label = "BLOCKED"
+		}
+		fmt.Fprintf(os.Stderr, "%s: %s\n", label, a)
+	}
 }
 
 func cmdGuide(ctx context.Context, a *app.App, args []string) error {
@@ -263,6 +281,7 @@ func cmdCall(ctx context.Context, a *app.App, args []string) error {
 	fs := flag.NewFlagSet("call", flag.ContinueOnError)
 	raw := fs.String("args", "{}", "JSON arguments")
 	yes := fs.Bool("yes", false, "confirm a tool that changes data")
+	force := fs.Bool("force", false, "use a site the integrity check blocked (after reading the alert)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -274,8 +293,12 @@ func cmdCall(ctx context.Context, a *app.App, args []string) error {
 	if err := json.Unmarshal([]byte(*raw), &in); err != nil {
 		return fmt.Errorf("--args: %w", err)
 	}
-	r, err := a.Call(ctx, pos[0], pos[1], in, *yes)
+	r, integ, err := a.CallChecked(ctx, pos[0], pos[1], in, *yes, *force)
+	printAlerts(integ)
 	if err != nil {
+		if errors.Is(err, app.ErrBlocked) {
+			return errors.New("blocked by the integrity check (see the alert); rerun with --force only if you accept the risk")
+		}
 		return err
 	}
 	printJSON(r)

@@ -4,7 +4,7 @@ import { getAgentByName } from 'agents';
 import type { Env } from './env';
 import { ScreeningAgent } from './agent';
 import { b64, keyId, signingString, timingSafeEqual, verifyEd25519 } from './lib/crypto';
-import { activeVersion, audit, now, publish, registryKey, settingNum } from './lib/db';
+import { activeVersion, audit, now, publish, registryKey, setting, settingNum } from './lib/db';
 import { diffPacks, mergeTools, metaChanged } from './lib/gate';
 import { hard, scan } from './lib/scan';
 import { packHash, validate, type Pack, type Tool } from './lib/sitepack';
@@ -119,6 +119,36 @@ route('GET', '/v1/sites/:origin', async (_r, env, [origin]) => {
     version: v.version,
     state: site.state === 'expired' ? 'expired' : 'active',
     verifiedAt: v.verified_at,
+  });
+});
+
+// Status for clients that already hold a pack: they compare the hash and obey the flags.
+route('GET', '/v1/sites/:origin/status', async (_r, env, [origin]) => {
+  const site = await env.DB.prepare(
+    'SELECT origin, state, verdict, active_version, delist_reason FROM sites WHERE origin = ?',
+  )
+    .bind(origin)
+    .first<{
+      origin: string;
+      state: string;
+      verdict: string | null;
+      active_version: string | null;
+      delist_reason: string | null;
+    }>();
+  if (!site) throw new HttpError(404, 'site not in the registry');
+  const v = site.active_version
+    ? await env.DB.prepare('SELECT hash, verified_at FROM versions WHERE origin = ? AND version = ?')
+        .bind(origin, site.active_version)
+        .first<{ hash: string; verified_at: string }>()
+    : null;
+  return json({
+    origin,
+    state: site.state,
+    verdict: site.verdict,
+    version: site.active_version,
+    hash: v?.hash ?? null,
+    verifiedAt: v?.verified_at ?? null,
+    reason: site.delist_reason,
   });
 });
 
@@ -251,12 +281,33 @@ route('POST', '/v1/keys', async (req, env) => {
   const sameIp = ipHash
     ? await env.DB.prepare('SELECT COUNT(*) AS n FROM keys WHERE ip_hash = ?').bind(ipHash).first<{ n: number }>()
     : null;
-  const note =
-    sameIp && sameIp.n > 0 ? `${sameIp.n} other key(s) from the same network` : 'first key from this network';
+  let note = sameIp && sameIp.n > 0 ? `${sameIp.n} other key(s) from the same network` : 'first key from this network';
+  // Auto-approve, with a cap of new keys per network per day against key farming.
+  const auto = (await setting(env, 'auto_approve_keys', 'true')) === 'true';
+  const day = new Date(Date.now() - 864e5).toISOString();
+  const recent = ipHash
+    ? await env.DB.prepare('SELECT COUNT(*) AS n FROM keys WHERE ip_hash = ? AND created_at > ?')
+        .bind(ipHash, day)
+        .first<{ n: number }>()
+    : null;
+  const cap = await settingNum(env, 'keys_per_network_per_day', 5);
+  const approve = auto && (recent?.n ?? 0) < cap;
+  if (auto && !approve) note += `; over ${cap} new keys from this network today: waits for review`;
+  else if (approve) note += '; auto-approved';
+  const ts = now();
   await env.DB.prepare(
-    'INSERT OR IGNORE INTO keys (id, public_key, name, state, note, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO keys (id, public_key, name, state, note, ip_hash, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(s.keyId, peek.publicKey, (peek.name ?? '').slice(0, 80), 'pending', note, ipHash, now())
+    .bind(
+      s.keyId,
+      peek.publicKey,
+      (peek.name ?? '').slice(0, 80),
+      approve ? 'approved' : 'pending',
+      note,
+      ipHash,
+      ts,
+      approve ? ts : null,
+    )
     .run();
   return json({ id: s.keyId, state: await keyState(env, s.keyId) });
 });
@@ -516,8 +567,8 @@ route('POST', '/v1/admin/sites/:origin', async (req, env, [origin]) => {
   const sets: string[] = [];
   const vals: unknown[] = [];
   if ('verdict' in b) {
-    if (b.verdict !== null && b.verdict !== 'good' && b.verdict !== 'bad')
-      throw new HttpError(400, 'verdict must be good, bad or null');
+    if (b.verdict !== null && b.verdict !== 'good' && b.verdict !== 'bad' && b.verdict !== 'suspicious')
+      throw new HttpError(400, 'verdict must be good, suspicious, bad or null');
     sets.push('verdict = ?');
     vals.push(b.verdict);
   }
@@ -562,6 +613,8 @@ const SETTING_KEYS = [
   'unsure_low',
   'unsure_high',
   'verify_sample_percent',
+  'auto_approve_keys',
+  'keys_per_network_per_day',
 ];
 
 route('GET', '/v1/admin/settings', async (req, env) => {

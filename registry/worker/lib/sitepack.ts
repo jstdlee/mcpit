@@ -40,6 +40,10 @@ export interface Guide {
   apiCatalog?: GuideDoc;
   aiPlugin?: GuideDoc;
   mcp?: GuideDoc;
+  jsonLd?: GuideDoc;
+  securityTxt?: GuideDoc;
+  meta?: Record<string, string>;
+  feeds?: { url: string; title?: string; items: number }[];
   sitemaps?: string[];
 }
 
@@ -50,7 +54,16 @@ export interface Page {
   source: string;
 }
 
-export const GUIDE_DOCS = ['robots', 'llms', 'agentCard', 'apiCatalog', 'aiPlugin', 'mcp'] as const;
+export const GUIDE_DOCS = [
+  'robots',
+  'llms',
+  'agentCard',
+  'apiCatalog',
+  'aiPlugin',
+  'mcp',
+  'jsonLd',
+  'securityTxt',
+] as const;
 
 export interface Pack {
   schema: string;
@@ -107,6 +120,20 @@ export function validate(p: unknown): string[] {
         if (typeof d?.url !== 'string' || typeof d?.text !== 'string' || d.text.length > 12000)
           errs.push(`guide.${k} is invalid`);
       }
+      const meta = pack.guide.meta;
+      if (
+        meta !== undefined &&
+        (typeof meta !== 'object' ||
+          Object.keys(meta).length > 30 ||
+          Object.values(meta).some((v) => typeof v !== 'string' || v.length > 400))
+      )
+        errs.push('guide.meta is invalid');
+      const feeds = pack.guide.feeds;
+      if (
+        feeds !== undefined &&
+        (!Array.isArray(feeds) || feeds.length > 10 || feeds.some((f) => typeof f?.url !== 'string'))
+      )
+        errs.push('guide.feeds is invalid');
       if (typeof pack.guide.description === 'string' && pack.guide.description.length > 500)
         errs.push('guide.description is too long');
     }

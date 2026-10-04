@@ -1,14 +1,19 @@
 package explore
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"io"
 	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/html"
 
 	"github.com/jstdlee/mcpit/cli/internal/sitepack"
 )
@@ -23,33 +28,42 @@ func (e *Explorer) readGuide(ctx context.Context) (*sitepack.Guide, []string, []
 	var cands []*candidate
 	examples := map[string][]string{}
 
-	if b := e.get(ctx, e.origin+"/robots.txt", ""); b != nil {
-		g.Robots = &sitepack.GuideDoc{URL: e.origin + "/robots.txt", Text: clip(string(b), 3000)}
-		for _, line := range strings.Split(string(b), "\n") {
-			k, v, ok := strings.Cut(strings.TrimSpace(line), ":")
-			if !ok {
-				continue
-			}
-			v = strings.TrimSpace(v)
-			switch strings.ToLower(strings.TrimSpace(k)) {
-			case "sitemap":
-				g.Sitemaps = appendUnique(g.Sitemaps, v)
-			case "llms":
-				e.llmsHint = v
-			}
-		}
+	// robots.txt (RFC 9309): sitemaps and the non-standard "Llms:" pointer.
+	e.readRobots(ctx)
+	if e.robots != nil {
+		g.Robots = &sitepack.GuideDoc{URL: e.origin + "/robots.txt", Text: clip(e.robotsTxt, 3000)}
+		g.Sitemaps = append(g.Sitemaps, e.robots.Sitemaps...)
+		e.llmsHint = e.robots.Extra["llms"]
 	}
+	// sitemaps.org protocol: urlset, sitemap index, gzip.
 	if len(g.Sitemaps) == 0 {
-		g.Sitemaps = []string{e.origin + "/sitemap.xml"}
+		g.Sitemaps = []string{e.origin + "/sitemap.xml", e.origin + "/sitemap_index.xml"}
 	}
 	var found []string
 	for _, sm := range g.Sitemaps {
-		sitemapURLs = append(sitemapURLs, e.readSitemap(ctx, sm, 0)...)
-	}
-	if len(sitemapURLs) > 0 {
-		found = g.Sitemaps
+		if urls := e.readSitemap(ctx, sm, 0); len(urls) > 0 {
+			sitemapURLs = append(sitemapURLs, urls...)
+			found = append(found, sm)
+		}
 	}
 	g.Sitemaps = found
+
+	// Home page head: meta, canonical, Open Graph, JSON-LD (schema.org), feed links.
+	feedLinks := e.readHead(ctx, g, &cands)
+	// RSS 2.0 / Atom feeds: announced links first, then common paths.
+	for _, fu := range append(feedLinks, e.origin+"/rss.xml", e.origin+"/feed.xml", e.origin+"/atom.xml", e.origin+"/feed", e.origin+"/index.xml") {
+		if len(g.Feeds) >= 3 {
+			break
+		}
+		if f, items := e.readFeed(ctx, fu); f != nil && !hasFeed(g.Feeds, f.URL) {
+			g.Feeds = append(g.Feeds, *f)
+			e.feedItems = append(e.feedItems, items...)
+		}
+	}
+	// RFC 9116 security.txt.
+	if t := e.getText(ctx, e.origin+"/.well-known/security.txt"); strings.Contains(strings.ToLower(t), "contact:") {
+		g.SecurityTxt = &sitepack.GuideDoc{URL: e.origin + "/.well-known/security.txt", Text: clip(t, 2000)}
+	}
 
 	llmsURLs := []string{e.origin + "/llms.txt", e.origin + "/llms-full.txt"}
 	if e.llmsHint != "" {
@@ -110,7 +124,8 @@ func (e *Explorer) readGuide(ctx context.Context) (*sitepack.Guide, []string, []
 		}
 	}
 	e.examples = examples
-	if g.Robots == nil && g.LLMs == nil && g.AgentCard == nil && g.APICatalog == nil && g.AIPlugin == nil && g.MCP == nil && len(g.Sitemaps) == 0 {
+	if g.Robots == nil && g.LLMs == nil && g.AgentCard == nil && g.APICatalog == nil && g.AIPlugin == nil && g.MCP == nil &&
+		g.JSONLD == nil && g.SecurityTxt == nil && len(g.Meta) == 0 && len(g.Feeds) == 0 && len(g.Sitemaps) == 0 {
 		return nil, sitemapURLs, cands
 	}
 	return g, sitemapURLs, cands
@@ -129,6 +144,13 @@ func (e *Explorer) readSitemap(ctx context.Context, u string, depth int) []strin
 	b := e.get(ctx, u, "")
 	if b == nil {
 		return nil
+	}
+	if len(b) > 2 && b[0] == 0x1f && b[1] == 0x8b { // sitemap.xml.gz
+		zr, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			return nil
+		}
+		b, _ = io.ReadAll(io.LimitReader(zr, 50<<20))
 	}
 	var us urlset
 	if xml.Unmarshal(b, &us) != nil {
@@ -328,7 +350,7 @@ func firstFloat(lists ...[]string) *float64 {
 
 // buildPages makes the site map: crawled pages with their heading or title, then
 // sitemap URLs. The category is the first path segment.
-func buildPages(pages []*PageResult, sitemap []string) []sitepack.Page {
+func buildPages(pages []*PageResult, sitemap []string, feed []feedItem) []sitepack.Page {
 	// On single-page apps every page shares one <title>; such a title says nothing.
 	count := map[string]int{}
 	for _, p := range pages {
@@ -380,6 +402,12 @@ func buildPages(pages []*PageResult, sitemap []string) []sitepack.Page {
 	for _, s := range sitemap {
 		add(s, "", "sitemap")
 	}
+	for i, it := range feed {
+		if i >= 50 {
+			break
+		}
+		add(it.URL, it.Title, "feed")
+	}
 	return out
 }
 
@@ -391,4 +419,208 @@ func titleFromPath(p string) string {
 	}
 	last = strings.NewReplacer("-", " ", "_", " ").Replace(last)
 	return strings.ToUpper(last[:1]) + last[1:]
+}
+
+// readHead reads the home page <head>: meta description, canonical, lang, Open Graph and
+// Twitter tags, schema.org JSON-LD (a WebSite SearchAction becomes a search tool), feed
+// links and the llms link. It returns the announced feed URLs.
+func (e *Explorer) readHead(ctx context.Context, g *sitepack.Guide, cands *[]*candidate) []string {
+	b := e.get(ctx, e.origin+"/", "")
+	if b == nil {
+		return nil
+	}
+	doc, err := html.Parse(bytes.NewReader(b))
+	if err != nil {
+		return nil
+	}
+	meta := map[string]string{}
+	var feeds []string
+	var jsonld []string
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "html":
+				if l := attr(n, "lang"); l != "" {
+					meta["lang"] = l
+				}
+			case "meta":
+				key := attr(n, "name")
+				if key == "" {
+					key = attr(n, "property")
+				}
+				key = strings.ToLower(key)
+				if c := attr(n, "content"); c != "" && (key == "description" || key == "keywords" || strings.HasPrefix(key, "og:") || strings.HasPrefix(key, "twitter:")) {
+					if len(meta) < 30 {
+						meta[key] = clip(c, 300)
+					}
+				}
+			case "link":
+				rel := strings.ToLower(attr(n, "rel"))
+				href := attr(n, "href")
+				switch {
+				case rel == "canonical":
+					meta["canonical"] = clip(e.abs(href), 300)
+				case rel == "alternate" && (strings.Contains(attr(n, "type"), "rss") || strings.Contains(attr(n, "type"), "atom")):
+					if u := e.abs(href); e.sameSite(u) {
+						feeds = append(feeds, u)
+					}
+				case rel == "llms" && e.llmsHint == "":
+					e.llmsHint = href
+				}
+			case "script":
+				if strings.Contains(attr(n, "type"), "ld+json") && n.FirstChild != nil {
+					jsonld = append(jsonld, strings.TrimSpace(n.FirstChild.Data))
+				}
+			}
+		}
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			walk(ch)
+		}
+	}
+	walk(doc)
+	if len(meta) > 0 {
+		g.Meta = meta
+		g.Description = meta["description"]
+	}
+	if len(jsonld) > 0 {
+		all := strings.Join(jsonld, "\n")
+		g.JSONLD = &sitepack.GuideDoc{URL: e.origin + "/", Text: clip(all, 6000)}
+		for _, block := range jsonld {
+			if c := e.searchActionTool(block); c != nil {
+				*cands = append(*cands, c)
+			}
+		}
+	}
+	return feeds
+}
+
+// searchActionTool turns a schema.org WebSite potentialAction SearchAction into a tool.
+func (e *Explorer) searchActionTool(block string) *candidate {
+	var v any
+	if json.Unmarshal([]byte(block), &v) != nil {
+		return nil
+	}
+	var tpl string
+	var find func(x any)
+	find = func(x any) {
+		switch t := x.(type) {
+		case map[string]any:
+			if typ, _ := t["@type"].(string); typ == "SearchAction" {
+				switch tg := t["target"].(type) {
+				case string:
+					tpl = tg
+				case map[string]any:
+					tpl, _ = tg["urlTemplate"].(string)
+				}
+			}
+			for _, y := range t {
+				if tpl == "" {
+					find(y)
+				}
+			}
+		case []any:
+			for _, y := range t {
+				if tpl == "" {
+					find(y)
+				}
+			}
+		}
+	}
+	find(v)
+	if tpl == "" || !e.sameSite(tpl) {
+		return nil
+	}
+	u, err := url.Parse(strings.NewReplacer("{", "MCPITL", "}", "MCPITR").Replace(tpl))
+	if err != nil {
+		return nil
+	}
+	c := &candidate{source: "guide", observed: 1, effectFact: "read", formKind: "search"}
+	c.tool = sitepack.Tool{ID: "search", Kind: "search", Auth: "none", Executors: []string{"http"},
+		Description: "Search the site (schema.org SearchAction).",
+		Request:     sitepack.Request{Method: "GET", URL: u.Scheme + "://" + u.Host + u.Path}, Output: sitepack.Output{Type: "html"}}
+	for name, vals := range u.Query() {
+		p := c.param(name)
+		p.in = "query"
+		if len(vals) > 0 && strings.HasPrefix(vals[0], "MCPITL") {
+			p.roleFact = "query"
+			p.values = []string{e.ProbeText}
+		} else if len(vals) > 0 {
+			p.roleFact, p.values = "const", vals
+		}
+	}
+	return c
+}
+
+type rssDoc struct {
+	XMLName xml.Name
+	Channel struct {
+		Title string `xml:"title"`
+		Items []struct {
+			Title string `xml:"title"`
+			Link  string `xml:"link"`
+		} `xml:"item"`
+	} `xml:"channel"`
+	// Atom
+	Title   string `xml:"title"`
+	Entries []struct {
+		Title string `xml:"title"`
+		Links []struct {
+			Href string `xml:"href,attr"`
+			Rel  string `xml:"rel,attr"`
+		} `xml:"link"`
+	} `xml:"entry"`
+}
+
+type feedItem struct{ URL, Title string }
+
+// readFeed parses an RSS 2.0 or Atom feed.
+func (e *Explorer) readFeed(ctx context.Context, u string) (*sitepack.Feed, []feedItem) {
+	b := e.get(ctx, u, "")
+	if b == nil {
+		return nil, nil
+	}
+	var d rssDoc
+	if xml.Unmarshal(b, &d) != nil {
+		return nil, nil
+	}
+	var items []feedItem
+	switch d.XMLName.Local {
+	case "rss", "RDF":
+		for _, it := range d.Channel.Items {
+			if l := strings.TrimSpace(it.Link); e.sameOrigin(l) {
+				items = append(items, feedItem{l, strings.TrimSpace(it.Title)})
+			}
+		}
+		return &sitepack.Feed{URL: u, Title: clip(strings.TrimSpace(d.Channel.Title), 120), Items: len(items)}, items
+	case "feed":
+		for _, en := range d.Entries {
+			for _, l := range en.Links {
+				if (l.Rel == "" || l.Rel == "alternate") && e.sameOrigin(strings.TrimSpace(l.Href)) {
+					items = append(items, feedItem{strings.TrimSpace(l.Href), strings.TrimSpace(en.Title)})
+					break
+				}
+			}
+		}
+		return &sitepack.Feed{URL: u, Title: clip(strings.TrimSpace(d.Title), 120), Items: len(items)}, items
+	}
+	return nil, nil
+}
+
+func hasFeed(fs []sitepack.Feed, u string) bool {
+	for _, f := range fs {
+		if f.URL == u {
+			return true
+		}
+	}
+	return false
+}
+
+func attr(n *html.Node, k string) string {
+	for _, a := range n.Attr {
+		if a.Key == k {
+			return a.Val
+		}
+	}
+	return ""
 }

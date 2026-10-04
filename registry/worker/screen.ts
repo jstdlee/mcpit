@@ -372,6 +372,12 @@ async function checkGuide(
       chunks.push({ doc: k, text: d.text.slice(i, i + 1500) });
   }
   if (pack.guide?.robots?.text) chunks.push({ doc: 'robots', text: pack.guide.robots.text.slice(0, 1500) });
+  const metaText = [
+    pack.guide?.description ?? '',
+    ...Object.values(pack.guide?.meta ?? {}),
+    ...(pack.guide?.feeds ?? []).map((f) => f.title ?? ''),
+  ].join(' | ');
+  if (metaText.replace(/[ |]/g, '')) chunks.push({ doc: 'meta', text: metaText.slice(0, 1500) });
   const titles = (pack.pages ?? []).map((p) => p.title ?? '').join(' | ');
   if (titles) chunks.push({ doc: 'pages', text: titles.slice(0, 1500) });
   let max = 0;

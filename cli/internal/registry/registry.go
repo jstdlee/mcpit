@@ -275,3 +275,27 @@ func (r *rawAndOut) UnmarshalJSON(b []byte) error {
 	}
 	return json.Unmarshal(b, r.b)
 }
+
+// SiteStatus is what the registry says about a site right now.
+type SiteStatus struct {
+	Origin     string `json:"origin"`
+	State      string `json:"state"`   // listed | delisted | expired
+	Verdict    string `json:"verdict"` // good | suspicious | bad | ""
+	Version    string `json:"version"`
+	Hash       string `json:"hash"`
+	VerifiedAt string `json:"verifiedAt"`
+	Reason     string `json:"reason"`
+}
+
+func (c *Client) SiteStatus(ctx context.Context, origin string) (*SiteStatus, error) {
+	var out SiteStatus
+	err := c.do(ctx, "GET", "/v1/sites/"+url.PathEscape(origin)+"/status", nil, &out, false)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status == 404 {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
