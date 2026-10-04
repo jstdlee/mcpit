@@ -18,38 +18,28 @@ Status: v0.1. Plan: [PLAN.md](PLAN.md) · overview page: [docs/plan.html](docs/p
 | `experiments/cf-models/` | Decision-model tests (Clef-flash, Clef, DeepSeek) on screening questions. |
 | `legacy/extension/` | The parked MCPfier 0.1 Chrome extension prototype. |
 
-## CLI
-
-Build (Go 1.27+, Chrome or Chromium for exploring):
+## Install
 
 ```bash
-cd cli && go build -o bin/mcpit ./cmd/mcpit
+curl -fsSL https://github.com/jstdlee/mcpit/releases/latest/download/install.sh | sh      # Linux, macOS
+irm https://github.com/jstdlee/mcpit/releases/latest/download/install.ps1 | iex           # Windows PowerShell
+go install github.com/jstdlee/mcpit/cli/cmd/mcpit@latest                                  # Go 1.27+
 ```
 
+Every push to `main` builds a release for Linux, macOS and Windows (amd64 and arm64).
+
+- **[Install and get started](docs/INSTALL.md)** — requirements, first commands, where data lives, safety.
+- **[mcpit for agents](docs/AGENTS.md)** — `mcpit setup <agent>` for omp, Claude Code, Codex, Cursor, VS Code and Gemini CLI; MCP tools; the skill; alerts.
+
+## Get started
+
 ```bash
-mcpit explore https://www.example.com/          # slow, once
-mcpit tools example.com
+mcpit doctor
+mcpit tools www.gutenberg.org                       # a site already in the registry
+mcpit explore https://www.example.com/              # a new site: slow, once
 mcpit call example.com search_api --args '{"q":"lamp"}'
-mcpit serve                                     # MCP server on stdio
-```
-
-Add it to an agent, for example Claude Code:
-
-```bash
-claude mcp add mcpit -- mcpit serve
-```
-
-MCP tools: `mcpit_find`, `mcpit_tools`, `mcpit_call`, `mcpit_explore`, `mcpit_submit`, `mcpit_report`. Tools that change data ask the user to confirm (MCP elicitation) and fail closed without it.
-
-Decision model: Clef-flash on Workers AI with your own Cloudflare account (`CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`, or an existing `cf` CLI login). Local jev: `mcpit config set decider systemone http://127.0.0.1:8011/v1/systemone`. With no model, rule fallbacks run. Check with `mcpit doctor`.
-
-Share a sitepack:
-
-```bash
-mcpit key init             # Ed25519 device key; a moderator approves it
-mcpit submit example.com
-mcpit status <submission-id>
-mcpit pull example.com     # signed active version from the registry
+mcpit setup omp                                     # add the MCP server + skill to an agent
+mcpit key init && mcpit submit example.com          # share it (keys are approved automatically)
 ```
 
 ## Registry

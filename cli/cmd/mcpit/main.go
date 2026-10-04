@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/jstdlee/mcpit/cli/internal/agentsetup"
 	"github.com/jstdlee/mcpit/cli/internal/app"
 	"github.com/jstdlee/mcpit/cli/internal/config"
 	"github.com/jstdlee/mcpit/cli/internal/decide"
@@ -41,6 +43,9 @@ Usage:
   mcpit status <submission-id>
   mcpit store ls | show <site> | rm <site> | export <site> | import <file>
   mcpit config show | set registry <url> | set decider <clef|systemone|none> [endpoint]
+  mcpit setup <agent> [--scope project|user] [--no-skill]   add the MCP server + skill to an agent
+                                             agents: claude, codex, cursor, gemini, omp, vscode
+  mcpit setup skill [--dir DIR]                write the mcpit agent skill (SKILL.md)
   mcpit doctor | version
 
 Sites can be a URL, an origin or a host name.
@@ -64,6 +69,9 @@ func run(ctx context.Context, args []string) error {
 	if cmd == "version" {
 		fmt.Println("mcpit", version)
 		return nil
+	}
+	if cmd == "setup" {
+		return cmdSetup(rest)
 	}
 	a, err := app.New()
 	if err != nil {
@@ -96,6 +104,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdConfig(a, rest)
 	case "doctor":
 		return cmdDoctor(ctx, a)
+	case "setup":
+		return cmdSetup(rest)
 	}
 	return fmt.Errorf("unknown command %q (see mcpit help)", cmd)
 }
@@ -490,6 +500,71 @@ func cmdConfig(a *app.App, args []string) error {
 	c.Decider.Token, c.Decider.AccountID = "", "" // never persist env values by accident
 	return c.Save()
 }
+
+func cmdSetup(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: mcpit setup <%s|skill>", strings.Join(agentsetup.Names(), "|"))
+	}
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	scope := fs.String("scope", "project", "project (this folder) or user (all projects)")
+	noSkill := fs.Bool("no-skill", false, "do not write the agent skill")
+	dir := fs.String("dir", "", "folder for `setup skill`")
+	command := fs.String("command", "", "command the agent runs (default: this mcpit binary)")
+	var envs multiFlag
+	fs.Var(&envs, "env", "KEY=VALUE passed to the MCP server (repeatable)")
+	if _, err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	if args[0] == "skill" {
+		d := *dir
+		if d == "" {
+			d = filepath.Join(".", "skills", "mcpit")
+		}
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return err
+		}
+		f := filepath.Join(d, "SKILL.md")
+		fmt.Println("wrote", f)
+		return os.WriteFile(f, []byte(agentsetup.Skill), 0o644)
+	}
+	cmd := *command
+	if cmd == "" {
+		if exe, err := os.Executable(); err == nil {
+			cmd = exe
+		} else {
+			cmd = "mcpit"
+		}
+	}
+	env := map[string]string{}
+	for _, kv := range envs {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			return fmt.Errorf("--env %q: want KEY=VALUE", kv)
+		}
+		env[k] = v
+	}
+	cwd, _ := os.Getwd()
+	r, err := agentsetup.Install(args[0], *scope, cwd, cmd, env, !*noSkill)
+	if err != nil {
+		return err
+	}
+	if r.MCPFile != "" {
+		fmt.Println("MCP server added:", r.MCPFile)
+	}
+	if r.SkillDir != "" {
+		fmt.Println("skill written:   ", filepath.Join(r.SkillDir, "SKILL.md"))
+	}
+	if r.Manual != "" {
+		fmt.Println("do this by hand: ", r.Manual)
+	}
+	fmt.Println("Restart the agent, then ask it to use mcpit (try: \"use mcpit to search pypi.org for requests\").")
+	return nil
+}
+
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 func cmdDoctor(ctx context.Context, a *app.App) error {
 	fmt.Println("config dir: ", config.Dir())

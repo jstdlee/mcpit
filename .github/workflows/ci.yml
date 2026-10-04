@@ -6,7 +6,40 @@ on:
 
 jobs:
   cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: cli
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - run: go vet ./...
+      - name: test (Linux also runs the headless-Chrome explore of the fixture shop)
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then go test ./...; else go test -short ./...; fi
+        env:
+          MCPIT_DECIDER: none
+      - name: smoke (version, setup, help)
+        run: |
+          go build -o mcpit-smoke ./cmd/mcpit
+          ./mcpit-smoke version
+          ./mcpit-smoke help | head -3
+          mkdir -p smoke && cd smoke && ../mcpit-smoke setup omp && test -f .omp/mcp.json && test -f .omp/skills/mcpit/SKILL.md
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [cli, registry]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: cli
@@ -16,16 +49,32 @@ jobs:
         with:
           go-version-file: cli/go.mod
           cache-dependency-path: cli/go.sum
-      - run: go vet ./...
-      - name: test (includes the headless-Chrome explore test against the fixture shop)
-        run: go test ./...
-        env:
-          MCPIT_DECIDER: none
-      - name: build
+      - name: build all platforms
         run: |
-          for t in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
-            GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/mcpit
+          VERSION="0.3.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p ../dist
+          for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os=${t%/*}; arch=${t#*/}; name=mcpit_${os}_${arch}; ext=""
+            [ "$os" = windows ] && ext=.exe
+            mkdir -p "../dist/$name"
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "../dist/$name/mcpit$ext" ./cmd/mcpit
+            cp ../README.md ../LICENSE "../dist/$name/"
+            cd ../dist
+            if [ "$os" = windows ]; then zip -qr "$name.zip" "$name"; else tar -czf "$name.tar.gz" "$name"; fi
+            rm -rf "$name"
+            cd ../cli
           done
+          cd ../dist && sha256sum mcpit_* > SHA256SUMS && ls -l
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd ../dist
+          gh release create "v$VERSION" mcpit_* SHA256SUMS ../install.sh ../install.ps1 \
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" --latest \
+            --title "mcpit v$VERSION" \
+            --notes "Built from ${{ github.sha }}. Install: curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | sh (Linux, macOS) or irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex (Windows)."
 
   registry:
     runs-on: ubuntu-latest
