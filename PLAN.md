@@ -322,6 +322,20 @@ verify   → run each read tool twice; compare output shape
 save     → local store; offer submit
 ```
 
+### 7.1 Discovery sources
+
+| Source | Technique | Finds |
+|---|---|---|
+| Declared specs | Fetch `robots.txt`, `sitemap.xml`, `llms.txt`, `/.well-known/mcp`, common OpenAPI paths (`/openapi.json`, `/swagger.json`, `/api-docs`), OpenSearch (`<link rel="search">`), JSON-LD `SearchAction`, GraphQL introspection, RSS/Atom | Complete, exact APIs when the site publishes them |
+| Static crawl | Same-origin BFS over HTML (no JS), inside a page and time budget; obeys `robots.txt` | `<form>` (action, method, inputs, `<select>` options, `required`, `pattern`), links with query params (`?q=`, `?page=`) |
+| URL clustering | Group URLs by template (`/product/123` → `/product/{id}`); analyze 1–2 pages per template | Saves budget; finds detail-page tools |
+| JS bundle scan | Parse same-origin scripts for `fetch(`/axios/`XMLHttpRequest` URLs, API base URLs, route tables, GraphQL operation names | API endpoints that no link shows |
+| Headless run (Playwright) | Render one page per template; find search boxes, filters, sort, pagination, "load more"; fill with safe test values; scroll; capture all XHR/fetch/GraphQL/WebSocket traffic | The real API calls behind the UI |
+| Request diff | Compare captured requests across actions; the part that changes is a parameter; repeated tokens (CSRF, nonce) become a token step | Parameter names, types, enums, pagination, dynamic tokens |
+| Login profile | Same as headless, with the `mcpit login` profile | Tools behind a login (`auth: session`) |
+
+Rules for safety during discovery: same origin only (plus declared API domains), low request rate, no form submit with POST unless rules + Clef classify it as a read (search), never type real user data, stop on CAPTCHA.
+
 Decision engine: **rules → decision model → LLM**, the same as the screener. The decision model is Clef-flash on Workers AI (BYOK Cloudflare token), local jev, or none. Stop when confidence is high enough. Store every decision. Without a decision model, go from rules to the LLM.
 
 ## 8. Edge cases
