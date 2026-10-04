@@ -298,4 +298,3 @@ func clip(s string, n int) string {
 	}
 	return s
 }
-

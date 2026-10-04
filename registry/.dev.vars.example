@@ -1,0 +1,6 @@
+# Moderator token for /v1/admin/* and the console moderator pages.
+ADMIN_TOKEN=change-me
+# Ed25519 registry signing key (PKCS#8, base64) and its id. Leave empty in dev:
+# the registry then makes a dev key and stores it in D1 (never do this in production).
+SIGNING_KEY=
+SIGNING_KEY_ID=

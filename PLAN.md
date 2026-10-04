@@ -484,6 +484,25 @@ Stack decisions:
 
 Done when: Go unit tests + an end-to-end test against a local fixture site pass; registry logic tests pass (`vp test`); the loop runs against the local registry (`vp dev`).
 
+### 11.1 v0.1 result (2026-10-04)
+
+All six goal steps run locally (registry on `vp dev`, fixture shop on 127.0.0.1:7810):
+
+| Step | Result |
+|---|---|
+| Explore (CDP, depth 2, Clef-flash) | 7 tools in ~21 s: OpenSearch search (+ merged `category` select), live-search API, GraphQL `ProductFilters`, products list, product by id, recommendations, contact form with CSRF token step. Login form, `/admin` (robots), assets, i18n JSON and tracking skipped. 31 Clef-flash decisions. |
+| Call | CLI and MCP tools call over HTTP; write tool needs confirmation (refused without elicitation). |
+| Keys + submit | Pending key → 403; approved key → submit → screening. |
+| Gate | 6 read tools promoted (test call + Clef: desc.match, sub.injection, tool.effect); write tool quarantined; moderator approve → version `.2`. Repeated submit → same id; other key, same pack → confirmation; exfil URL → rejected by origin rule; same again → "rejected before"; regression → rejected; wording-only → kept out; subtle prompt injection → rejected (Clef 0.95), reputation −5. |
+| Clean pull + call | Pulled, signature and hash verified (Go = TypeScript canonical bytes), called with no exploration; usage counters update. |
+| Console | Dashboard, site page, moderator pages (keys, quarantine, sites, submissions, settings, audit). |
+
+Lesson: Clef-flash missed a subtle injection when the state held the whole submission (0.05) but caught it when the state held only that tool's text (0.95). Rule: give each safety question a focused state; batch only questions about the same small state.
+
+Not done in v0.1: LLM verifier sample (5 %), `mcpit login` profile, history import + idle batch, local jev provider test, deploy to tomcp.ohmyai.xyz (needs a D1 database, `ADMIN_TOKEN` and `SIGNING_KEY` secrets and the custom domain).
+
 ## 12. Next step
 
-M0: monorepo skeleton, sitepack schema v1, MIT license, CI.
+1. Deploy the registry to tomcp.ohmyai.xyz (after approval).
+2. Test explore on 10 real public sites; tune decision points.
+3. M5 items: `mcpit login`, history import, idle batch; LLM verifier sample.

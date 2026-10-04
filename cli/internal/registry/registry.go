@@ -163,14 +163,14 @@ func (c *Client) KeyStatus(ctx context.Context) (*KeyStatus, error) {
 }
 
 type Submission struct {
-	ID       string         `json:"id"`
-	State    string         `json:"state"`
-	Hash     string         `json:"hash"`
-	Origin   string         `json:"origin"`
-	Outcome  string         `json:"outcome,omitempty"`
-	Reason   string         `json:"reason,omitempty"`
-	Tools    map[string]any `json:"tools,omitempty"`
-	Existing bool           `json:"existing,omitempty"`
+	ID       string           `json:"id"`
+	State    string           `json:"state"`
+	Hash     string           `json:"hash"`
+	Origin   string           `json:"origin"`
+	Outcome  string           `json:"outcome,omitempty"`
+	Reason   string           `json:"reason,omitempty"`
+	Tools    []map[string]any `json:"tools,omitempty"`
+	Existing bool             `json:"existing,omitempty"`
 }
 
 func (c *Client) Submit(ctx context.Context, p *sitepack.Pack) (*Submission, error) {
@@ -188,11 +188,11 @@ func (c *Client) Status(ctx context.Context, id string) (*Submission, error) {
 type Pulled struct {
 	Pack      sitepack.Pack   `json:"pack"`
 	RawPack   json.RawMessage `json:"-"`
-	Hash      string        `json:"hash"`
-	Signature string        `json:"signature"`
-	KeyID     string        `json:"keyId"`
-	State     string        `json:"state"`
-	Version   string        `json:"version"`
+	Hash      string          `json:"hash"`
+	Signature string          `json:"signature"`
+	KeyID     string          `json:"keyId"`
+	State     string          `json:"state"`
+	Version   string          `json:"version"`
 }
 
 var ErrNotFound = errors.New("site not in the registry")

@@ -159,7 +159,10 @@ func (a *App) Call(ctx context.Context, site, toolID string, args map[string]any
 				rep.Error = "network"
 			}
 		}
-		go a.Registry.Report(context.Background(), rep)
+		// Short and synchronous: a CLI process would exit before a background send.
+		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = a.Registry.Report(rctx, rep)
+		cancel()
 	}
 	return r, err
 }

@@ -1,0 +1,46 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cli:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - run: go vet ./...
+      - name: test (includes the headless-Chrome explore test against the fixture shop)
+        run: go test ./...
+        env:
+          MCPIT_DECIDER: none
+      - name: build
+        run: |
+          for t in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
+            GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/mcpit
+          done
+
+  registry:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: registry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: registry/package-lock.json
+      - run: npm ci
+      - run: npx vp check
+      - run: npx tsc --noEmit -p .
+      - run: npx vp test run
+      - run: npx vp build

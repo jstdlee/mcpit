@@ -137,13 +137,13 @@ func (s *Store) List() ([]*sitepack.Pack, error) {
 
 // Decision is one entry of the decision log.
 type Decision struct {
-	Time   string             `json:"time"`
-	Point  string             `json:"point"`
-	Model  string             `json:"model"`
-	Answer string             `json:"answer"`
-	Probs  map[string]float64 `json:"probs,omitempty"`
-	Action string             `json:"action"`
-	Subject string            `json:"subject"`
+	Time    string             `json:"time"`
+	Point   string             `json:"point"`
+	Model   string             `json:"model"`
+	Answer  string             `json:"answer"`
+	Probs   map[string]float64 `json:"probs,omitempty"`
+	Action  string             `json:"action"`
+	Subject string             `json:"subject"`
 }
 
 func (s *Store) LogDecision(d Decision) {

@@ -8,7 +8,7 @@ import (
 func pack() *Pack {
 	return &Pack{Schema: Schema, Origin: "https://shop.example.com", Tools: []Tool{
 		{ID: "search", Description: "Search <products> & more", Kind: "search", Effect: "read", Auth: "none", Executors: []string{"http"},
-			Request: Request{Method: "GET", URL: "https://shop.example.com/search", Query: map[string]string{"q": "{{q}}"}},
+			Request:     Request{Method: "GET", URL: "https://shop.example.com/search", Query: map[string]string{"q": "{{q}}"}},
 			InputSchema: map[string]any{"type": "object", "required": []string{"q"}}, Output: Output{Type: "html"}},
 		{ID: "a_detail", Description: "Detail", Kind: "api", Effect: "read", Auth: "none", Executors: []string{"http"},
 			Request: Request{Method: "GET", URL: "https://shop.example.com/api/p/{{id}}"}, InputSchema: map[string]any{"type": "object"}, Output: Output{Type: "json"}},
