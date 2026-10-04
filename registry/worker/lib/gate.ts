@@ -44,7 +44,7 @@ export interface ModelView {
   cls?: string; // sub.class
 }
 
-export type Verdict = 'promote' | 'keep' | 'reject' | 'quarantine' | 'confirm';
+export type Verdict = 'promote' | 'keep' | 'reject' | 'quarantine' | 'confirm' | 'retire';
 
 export interface ToolResult {
   id: string;
@@ -61,6 +61,7 @@ export interface GateInput {
   candidateReplay: ReplayResult;
   activeReplay?: ReplayResult;
   model: ModelView;
+  broken?: string; // unchanged tool whose registry test call failed twice (reason)
   low: number; // unsure band
   high: number;
 }
@@ -78,7 +79,10 @@ export function decideTool(g: GateInput): ToolResult {
     reason,
   });
 
-  if (d.change === 'unchanged') return r('confirm', 'confirmation', 'same as the active version');
+  if (d.change === 'unchanged') {
+    if (g.broken) return r('retire', 'drift', `retired: ${g.broken}`);
+    return r('confirm', 'confirmation', 'same as the active version');
+  }
   if ((m.injection ?? 0) >= 0.5)
     return r('reject', 'risky', `decision model: text aimed at an AI assistant (${fmt(m.injection)})`);
   if (g.risky) return r('quarantine', 'risky', 'write, payment, destructive or unproven effect: moderator review');
@@ -146,8 +150,9 @@ function isCosmetic(d: ToolDiff): boolean {
 const fmt = (p?: number) => (p === undefined ? '?' : p.toFixed(2));
 
 /** mergeTools builds the next active tool list: active tools, with promoted tools added or replaced. */
-export function mergeTools(active: Pack | null, promoted: Tool[]): Tool[] {
+export function mergeTools(active: Pack | null, promoted: Tool[], retired: string[] = []): Tool[] {
   const out = new Map((active?.tools ?? []).map((t) => [t.id, t]));
+  for (const id of retired) out.delete(id);
   for (const t of promoted) {
     const prev = out.get(t.id);
     out.set(t.id, { ...t, rev: (prev?.rev ?? 0) + 1 });
@@ -157,9 +162,10 @@ export function mergeTools(active: Pack | null, promoted: Tool[]): Tool[] {
 
 export function summarize(results: ToolResult[]): { state: string; outcome: string } {
   const n = (v: Verdict) => results.filter((r) => r.verdict === v).length;
-  const changed = results.filter((r) => r.change !== 'unchanged');
+  const changed = results.filter((r) => r.change !== 'unchanged' || r.verdict === 'retire');
   if (changed.length === 0) return { state: 'done', outcome: 'confirmation' };
-  if (n('promote') > 0) return { state: 'done', outcome: n('promote') === changed.length ? 'promoted' : 'partial' };
+  const moved = n('promote') + n('retire');
+  if (moved > 0) return { state: 'done', outcome: moved === changed.length ? 'promoted' : 'partial' };
   if (n('quarantine') > 0) return { state: 'quarantined', outcome: 'quarantined' };
   if (n('keep') > 0) return { state: 'done', outcome: 'alternative' };
   return { state: 'rejected', outcome: 'rejected' };

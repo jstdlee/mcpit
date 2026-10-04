@@ -69,6 +69,17 @@ export async function screenSubmission(
       if (d.active) act.set(d.id, await replay(pack.origin, d.active, fetcher));
     }),
   );
+  // Unchanged read tools are re-tested too: a live tool that now fails twice is retired.
+  const unchanged = diff.filter((d) => d.change === 'unchanged' && d.candidate.effect === 'read' && d.candidate.probe);
+  const recheck = new Map<string, ReplayResult[]>();
+  await Promise.all(
+    unchanged.map(async (d) => {
+      recheck.set(d.id, [
+        await replay(pack.origin, d.candidate, fetcher),
+        await replay(pack.origin, d.candidate, fetcher),
+      ]);
+    }),
+  );
   // A 200 can still be a browser check or an error page: decision point resp.data, one focused call per response.
   const checks: { r: ReplayResult; t: Tool }[] = [];
   for (const d of changed) {
@@ -77,6 +88,8 @@ export async function screenSubmission(
     const a = act.get(d.id);
     if (a?.ok && a.preview && d.active) checks.push({ r: a, t: d.active });
   }
+  for (const d of unchanged)
+    for (const r of recheck.get(d.id) ?? []) if (r.ok && r.preview) checks.push({ r, t: d.candidate });
   await Promise.all(
     checks.map(async ({ r, t }) => {
       try {
@@ -97,6 +110,12 @@ export async function screenSubmission(
         if (p < 0.5) {
           r.ok = false;
           r.notData = true;
+          // The site may challenge the registry's network. A tool with a headless fallback that
+          // passed the explorer's test call cannot be judged from here: treat it as untested.
+          const v = t.evidence?.verified;
+          if (t.executors?.includes('headless') && (v === 'headless' || v === 'http')) {
+            r.skipped = `the site sends a browser check to the registry; the explorer verified it (${v})`;
+          }
         }
       } catch {
         /* keep the status-based result */
@@ -154,6 +173,7 @@ export async function screenSubmission(
 
   const results: ToolResult[] = [];
   const promoted: Tool[] = [];
+  const retired: string[] = [];
   const quarantined: { tool: Tool; result: ToolResult; view: ModelView }[] = [];
   for (const d of diff) {
     const i = changed.indexOf(d);
@@ -188,6 +208,7 @@ export async function screenSubmission(
             reason: 'decision model unavailable: moderator review',
           }
         : decideTool({
+            broken: brokenReason(recheck.get(d.id)),
             diff: d,
             risky: risky.has(d.id),
             fingerprintChanged,
@@ -199,6 +220,7 @@ export async function screenSubmission(
           });
     results.push(res);
     if (res.verdict === 'promote') promoted.push(d.candidate);
+    if (res.verdict === 'retire') retired.push(d.id);
     if (res.verdict === 'quarantine') quarantined.push({ tool: d.candidate, result: res, view });
   }
 
@@ -239,11 +261,11 @@ export async function screenSubmission(
 
   let published: { version: string; hash: string } | null = null;
   const auto = (await setting(env, 'auto_promote', 'true')) === 'true';
-  if (!poisoned && auto && (promoted.length > 0 || metaAccepted)) {
+  if (!poisoned && auto && (promoted.length > 0 || metaAccepted || retired.length > 0)) {
     const meta = metaAccepted
       ? { guide: pack.guide, pages: pack.pages }
       : { guide: active?.parsed.guide, pages: active?.parsed.pages };
-    published = await publish(env, pack, mergeTools(active?.parsed ?? null, promoted), id, meta);
+    published = await publish(env, pack, mergeTools(active?.parsed ?? null, promoted, retired), id, meta);
   }
   for (const q of quarantined) {
     if (poisoned) break;
@@ -279,7 +301,14 @@ export async function screenSubmission(
   const reason = poisoned
     ? 'rejected: prompt injection'
     : published
-      ? `promoted ${[...promoted.map((t) => t.id), ...(metaAccepted ? ['guide + site map'] : [])].join(', ')} → version ${published.version}`
+      ? `${[
+          promoted.length || metaAccepted
+            ? `promoted ${[...promoted.map((t) => t.id), ...(metaAccepted ? ['guide + site map'] : [])].join(', ')}`
+            : '',
+          retired.length ? `retired ${retired.join(', ')}` : '',
+        ]
+          .filter(Boolean)
+          .join('; ')} → version ${published.version}`
       : results
           .filter((r) => r.change !== 'unchanged')
           .map((r) => `${r.id}: ${r.reason}`)
@@ -383,6 +412,14 @@ export async function reverify(
     ),
   ]);
   return 'expired';
+}
+
+/** brokenReason: both registry test calls of an unchanged tool failed. */
+function brokenReason(rs?: ReplayResult[]): string | undefined {
+  if (!rs || rs.length < 2 || rs.some((r) => r.ok || r.skipped)) return undefined;
+  return rs.some((r) => r.notData)
+    ? 'its test call now returns an error or browser-check page'
+    : `its test call fails (HTTP ${rs[0].status || 'error'})`;
 }
 
 const RESP_DATA_Q =

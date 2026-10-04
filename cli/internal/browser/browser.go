@@ -42,6 +42,11 @@ func Fetch(parent context.Context, url string) (*Page, error) {
 	defer cancelT()
 	ctx, cancel := context.WithTimeout(tctx, 45*time.Second)
 	defer cancel()
+	// Start the tab on the long-lived context first: chromedp binds the browser to the first
+	// context it runs on, and cancelling a shorter navigation context would close the tab.
+	if err := chromedp.Do(ctx); err != nil {
+		return nil, err
+	}
 	navCtx, cancelNav := context.WithTimeout(ctx, 25*time.Second)
 	navErr := chromedp.Do(navCtx, chromedp.Navigate(url))
 	cancelNav()

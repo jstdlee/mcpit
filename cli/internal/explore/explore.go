@@ -48,6 +48,7 @@ type Explorer struct {
 	examples  map[string][]string // parameter examples from the guide
 	sitemap   []string
 	feedItems []feedItem
+	altArgs   map[string][]map[string]any // more example arguments per tool id
 }
 
 func New(d *decide.Decider, o Options) *Explorer {
@@ -95,6 +96,8 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 		}
 	}
 
+	e.markBlocked(ctx, pages)
+
 	// Requests: rules settle assets; the decision model sorts the rest, one batch per page.
 	var apis []*NetEntry
 	type dumpReq struct {
@@ -135,6 +138,9 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	var forms []Form
 	seenForm := map[string]bool{}
 	for _, p := range pages {
+		if p.Blocked {
+			continue // forms on a browser-check page belong to the check, not the site
+		}
 		for _, f := range p.Forms {
 			key := f.Method + " " + stripQuery(f.Action) + " " + fieldNames(f.Fields)
 			if !seenForm[key] && e.sameSite(f.Action) {
@@ -158,6 +164,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	e.decideEffects(ctx, cands)
 
 	ids := map[string]int{}
+	e.altArgs = map[string][]map[string]any{}
 	for _, c := range cands {
 		c.finish(e.ProbeText)
 		t := c.tool
@@ -167,6 +174,9 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 			t.ID = fmt.Sprintf("%s_%d", base, n+1)
 		}
 		ids[base]++
+		if alts := c.altProbes(); len(alts) > 0 {
+			e.altArgs[t.ID] = alts
+		}
 		pack.Tools = append(pack.Tools, t)
 	}
 
@@ -381,6 +391,30 @@ func (c *candidate) finish(probe string) {
 	if c.tool.Description == "" {
 		c.tool.Description = describe(c)
 	}
+}
+
+// altProbes returns up to 3 other argument sets from the observed values of path parameters.
+func (c *candidate) altProbes() []map[string]any {
+	if c.tool.Probe == nil {
+		return nil
+	}
+	var out []map[string]any
+	for i := 1; i < 4; i++ {
+		alt := map[string]any{}
+		changed := false
+		for k, v := range c.tool.Probe.Args {
+			alt[k] = v
+		}
+		for _, p := range c.params {
+			if p.in == "path" && i < len(p.values) {
+				alt[p.name], changed = p.values[i], true
+			}
+		}
+		if changed {
+			out = append(out, alt)
+		}
+	}
+	return out
 }
 
 func setParam(p *param, query map[string]string, body map[string]any, v string) {
@@ -688,24 +722,66 @@ func (e *Explorer) verify(ctx context.Context, origin string, tools []sitepack.T
 					preview = resultPreview(r)
 				}
 			}
+			// Some sites challenge single pages: try other example values before giving up.
+			for _, alt := range e.altArgs[t.ID] {
+				if ok > 0 && e.isData(ctx, t, preview) {
+					break
+				}
+				if r, err := execute.Call(ctx, e.HTTP, origin, t, alt, execute.Options{NoBrowser: true}); err == nil && r.Status == t.Probe.Expect.Status {
+					ok, preview = 1, resultPreview(r)
+					t.Probe.Args = alt
+				}
+			}
 			// A 200 can still be a browser check or an error page: decision point resp.data.
 			via := "http"
+			challenged := false
+			if ok > 0 && !e.isData(ctx, t, preview) && !e.Opts.NoBrowser {
+				// Sites often challenge a client right after a burst of requests: wait once, retry.
+				mu.Lock()
+				e.say("verify %s: browser check; waiting 30 s before one retry", t.ID)
+				mu.Unlock()
+				select {
+				case <-time.After(30 * time.Second):
+				case <-ctx.Done():
+				}
+				if r, err := execute.Call(ctx, e.HTTP, origin, t, t.Probe.Args, execute.Options{NoBrowser: true}); err == nil && r.Status == t.Probe.Expect.Status {
+					preview = resultPreview(r)
+				}
+			}
 			if ok > 0 && !e.isData(ctx, t, preview) {
-				ok = 0
+				ok, challenged = 0, true
 				if t.Request.Method == "GET" && !e.Opts.NoBrowser {
 					hl := *t
 					hl.Executors = []string{"headless"}
 					if r, err := execute.Call(ctx, e.HTTP, origin, &hl, t.Probe.Args, execute.Options{}); err == nil && e.isData(ctx, t, resultPreview(r)) {
-						t.Executors = []string{"headless"}
-						ok, via = 1, "headless browser (plain HTTP got a browser check)"
+						t.Executors = []string{"http", "headless"} // HTTP first, Chrome after a browser check
+						ok, via, challenged = 1, "headless browser (plain HTTP got a browser check)", false
 					}
 				}
+			}
+			if ok == 0 && challenged {
+				via = "http (browser check; probe kept so the registry can test from its own network)"
+			}
+			if t.Evidence == nil {
+				t.Evidence = &sitepack.Evidence{}
+			}
+			switch {
+			case ok > 0 && strings.HasPrefix(via, "headless"):
+				t.Evidence.Verified = "headless"
+			case ok > 0:
+				t.Evidence.Verified = "http"
+			case challenged:
+				t.Evidence.Verified = "challenged"
+			default:
+				t.Evidence.Verified = "failed"
 			}
 			mu.Lock()
 			e.say("verify %s: %d/2 via %s", t.ID, ok, via)
 			mu.Unlock()
 			if ok == 0 {
-				t.Probe = nil
+				if !challenged {
+					t.Probe = nil // the endpoint itself failed
+				}
 				if t.Evidence != nil {
 					t.Evidence.Confidence = 0.3
 				}
@@ -714,6 +790,42 @@ func (e *Explorer) verify(ctx context.Context, origin string, tools []sitepack.T
 	}
 	wg.Wait()
 	return out
+}
+
+// markBlocked flags browser-check, captcha and error pages: a rule fact on the title and
+// first text, and the decision point resp.data for the rest.
+func (e *Explorer) markBlocked(ctx context.Context, pages []*PageResult) {
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for _, p := range pages {
+		head := p.Title + " " + clip(p.Text, 300)
+		if blockedPage.MatchString(head) {
+			p.Blocked = true
+		} else if e.D.Available() && strings.TrimSpace(p.Text) != "" {
+			wg.Add(1)
+			go func(p *PageResult) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				ans, err := e.D.Ask(ctx, "resp.data", map[string]any{"request": "GET " + p.URL, "response": p.Title + " — " + p.Text},
+					map[string]decide.Question{"x": decide.Noul("This response is the real content or data the request asked for, not an error, captcha, login wall or browser check page.")},
+					map[string]string{"x": p.URL})
+				if err == nil && ans["x"].Noul < 0.5 {
+					p.Blocked = true
+				}
+			}(p)
+		}
+	}
+	wg.Wait()
+	n := 0
+	for _, p := range pages {
+		if p.Blocked {
+			n++
+		}
+	}
+	if n > 0 {
+		e.say("%d of %d pages were browser checks or error pages; their forms are ignored", n, len(pages))
+	}
 }
 
 func resultPreview(r *execute.Result) string {

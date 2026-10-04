@@ -74,6 +74,8 @@ type Button struct {
 type PageResult struct {
 	URL      string
 	Title    string
+	Text     string // start of the visible text
+	Blocked  bool   // the page is a browser check, captcha or error page
 	Heading  string
 	MetaDesc string
 	LLMsLink string
@@ -175,13 +177,14 @@ const domJS = `(() => {
   const h = document.querySelector('h1') || document.querySelector('h2');
   const meta = document.querySelector('meta[name="description"]');
   const llms = document.querySelector('link[rel="llms"]');
-  return {title: document.title, heading: h ? h.innerText.trim().slice(0, 120) : '', metaDesc: meta ? (meta.content || '').slice(0, 300) : '',
+  return {title: document.title, text: (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').trim().slice(0, 600), heading: h ? h.innerText.trim().slice(0, 120) : '', metaDesc: meta ? (meta.content || '').slice(0, 300) : '',
     llms: llms ? llms.href : '', forms, inputs, buttons, links: [...new Set(links)].slice(0, 400), scripts,
     domSize: document.getElementsByTagName('*').length};
 })()`
 
 type domResult struct {
 	Title    string   `json:"title"`
+	Text     string   `json:"text"`
 	Heading  string   `json:"heading"`
 	MetaDesc string   `json:"metaDesc"`
 	LLMs     string   `json:"llms"`
@@ -299,7 +302,7 @@ func (c *Capturer) Visit(parent context.Context, pageURL string, act bool) (*Pag
 	if err != nil {
 		return nil, err
 	}
-	res := &PageResult{URL: pageURL, Title: dom.Title, Heading: dom.Heading, MetaDesc: dom.MetaDesc, LLMsLink: dom.LLMs,
+	res := &PageResult{URL: pageURL, Title: dom.Title, Text: dom.Text, Heading: dom.Heading, MetaDesc: dom.MetaDesc, LLMsLink: dom.LLMs,
 		Links: dom.Links, Scripts: dom.Scripts, DOMSize: dom.DOMSize, Inputs: dom.Inputs, Buttons: dom.Buttons}
 	for _, f := range dom.Forms {
 		f.Page = pageURL

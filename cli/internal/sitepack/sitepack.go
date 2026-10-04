@@ -122,7 +122,8 @@ type ProbeExpect struct {
 type Evidence struct {
 	Observed   int     `json:"observed"`
 	Confidence float64 `json:"confidence"`
-	Source     string  `json:"source,omitempty"` // network | form | openapi | opensearch
+	Source     string  `json:"source,omitempty"`   // network | form | openapi | opensearch
+	Verified   string  `json:"verified,omitempty"` // how the explorer's test call passed: http | headless | challenged | failed
 }
 
 type Provenance struct {

@@ -170,12 +170,46 @@ func Call(ctx context.Context, client *http.Client, origin string, t *sitepack.T
 	if len(r.Text) > o.MaxChars {
 		r.Text, r.Truncated = r.Text[:o.MaxChars], true
 	}
+	if t.Request.Method == "GET" && !o.NoBrowser && CanFallBack(t) && LooksBlocked(r) {
+		// Plain HTTP got a browser check: load the same URL in headless Chrome.
+		if pg, err := browser.Fetch(ctx, u.String()); err == nil {
+			hr := &Result{URL: pg.URL, Status: pg.Status, ContentType: "text/html (headless)", Text: pg.Text, Untrusted: true}
+			if len(hr.Text) > o.MaxChars {
+				hr.Text, hr.Truncated = hr.Text[:o.MaxChars], true
+			}
+			return hr, nil
+		}
+	}
 	return r, nil
 }
 
 // UsesBrowser reports whether the tool must run in headless Chrome.
 func UsesBrowser(t *sitepack.Tool) bool {
 	return len(t.Executors) > 0 && t.Executors[0] == "headless"
+}
+
+// CanFallBack reports whether the tool may switch to headless Chrome after a browser check.
+func CanFallBack(t *sitepack.Tool) bool {
+	for _, e := range t.Executors {
+		if e == "headless" {
+			return true
+		}
+	}
+	return false
+}
+
+var browserCheck = regexp.MustCompile(`(?i)(client challenge|enable javascript|javascript is disabled|just a moment|checking (if|your) (the site|browser)|are you a robot|captcha)`)
+
+// LooksBlocked is a quick fact check for browser-check pages.
+func LooksBlocked(r *Result) bool {
+	if r == nil || r.Data != nil {
+		return false
+	}
+	head := r.Text
+	if len(head) > 400 {
+		head = head[:400]
+	}
+	return browserCheck.MatchString(head)
 }
 
 func checkArgs(t *sitepack.Tool, args map[string]any) error {

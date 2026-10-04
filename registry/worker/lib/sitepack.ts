@@ -23,7 +23,7 @@ export interface Tool {
   steps?: { kind: string; url: string; extract: string; as: string }[];
   output: { type: string; itemsPath?: string };
   probe?: { args: Record<string, unknown>; expect: { status: number } };
-  evidence?: { observed: number; confidence: number; source?: string };
+  evidence?: { observed: number; confidence: number; source?: string; verified?: string };
 }
 
 export interface GuideDoc {

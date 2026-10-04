@@ -391,6 +391,9 @@ func buildPages(pages []*PageResult, sitemap []string, feed []feedItem) []sitepa
 	}
 	for _, p := range pages {
 		title := p.Title
+		if p.Blocked {
+			title = "" // a browser-check page title says nothing about the page
+		}
 		if title == "" || generic(title) {
 			if p.Heading != "" && !generic(p.Heading) && p.Heading != p.Title {
 				title = p.Heading
@@ -653,6 +656,12 @@ func (e *Explorer) fromPageShapes(pages []*PageResult, sitemap []string) []*cand
 		groups[key] = append(groups[key], member{segs, u.Path, title, slash})
 	}
 	for _, p := range pages {
+		if p.Blocked {
+			if u, err := url.Parse(p.URL); err == nil {
+				seen[u.Path] = true // never use a page that answered with a browser check
+			}
+			continue
+		}
 		add(p.URL, p.Title)
 	}
 	for _, s := range sitemap {
@@ -702,7 +711,10 @@ func (e *Explorer) fromPageShapes(pages []*PageResult, sitemap []string) []*cand
 			names = append(names, name)
 			tpl[i] = "{{" + name + "}}"
 			p := c.param(name)
-			p.in, p.roleFact, p.required, p.values = "path", "id", true, vals[:1]
+			if len(vals) > 4 {
+				vals = vals[:4]
+			}
+			p.in, p.roleFact, p.required, p.values = "path", "id", true, vals
 		}
 		path := "/" + strings.Join(tpl, "/")
 		if first.slash {

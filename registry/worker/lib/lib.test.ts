@@ -140,6 +140,17 @@ describe('promotion rules', () => {
       decideTool(gate({ diff: d, activeReplay: { status: 404, ok: false }, fingerprintChanged: true })).class,
     ).toBe('drift');
   });
+  it('retires a live tool that keeps failing, and merges without it', () => {
+    const d = { id: 'search_api', change: 'unchanged' as const, candidate: tool(), active: tool() };
+    expect(
+      decideTool(gate({ diff: d, broken: 'its test call now returns an error or browser-check page' })).verdict,
+    ).toBe('retire');
+    expect(decideTool(gate({ diff: d })).verdict).toBe('confirm');
+    expect(mergeTools(pack([tool(), tool({ id: 'x' })]), [], ['search_api']).map((t) => t.id)).toEqual(['x']);
+    expect(
+      summarize([{ id: 'search_api', change: 'unchanged', verdict: 'retire', class: 'drift', reason: '' }]).outcome,
+    ).toBe('promoted');
+  });
   it('treats a browser-check page as a failed test call', () => {
     const d = {
       id: 'search',
