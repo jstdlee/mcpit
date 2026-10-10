@@ -567,7 +567,11 @@ sgbus result: 7 tools found (geocode, nearest, search, busstops, arrivals, OCR, 
 - **Facts on families:** 50+ pages → items; 3+ literal API URLs that differ in one segment → one template (the registry gate would quarantine them).
 - Real sites: see the commit message and §11.7 results below.
 
-## 12. Next step
+## 12. Project end (2026-10-10)
+
+The project ended with v0.3.12. The public registry Worker was deleted. The items below stay open.
+
+### Open items
 
 1. Tune the explorer on real sites (§11.2).
 2. Custom domain tomcp.ohmyai.xyz.

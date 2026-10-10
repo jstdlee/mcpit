@@ -7,7 +7,7 @@ Make any website usable by an agent as an MCP server, with no change to the site
 - A shared **registry** controls versions, checks every submit, and serves signed sitepacks, so other users skip the slow first visit.
 - Every decision in mcpit is made by a decision model (Clef-flash on Workers AI, or local jev) through typed decision points, not by LLM reasoning.
 
-Status: v0.1. Plan: [PLAN.md](PLAN.md) · overview page: [docs/plan.html](docs/plan.html).
+Status: **ended (2026-10-10).** The last release is v0.3.12. The public registry at mcpit-registry.jstdlee.workers.dev is offline, so registry commands (`tools` for shared sites, `pull`, `submit`) fail unless you run your own registry (see below). Local explore and call still work. Plan: [PLAN.md](PLAN.md) · overview page: [docs/plan.html](docs/plan.html).
 
 ## Layout
 
