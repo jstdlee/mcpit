@@ -21,7 +21,7 @@ mcpit turns a website into callable tools (its search, forms and APIs) and keeps
 5. **No tools yet?** — call `mcpit_explore` with a page URL of the site. It starts a background
    job and returns at once. Then call `mcpit_explore_status` with the site (about every 20 s, or
    with `wait: true`, which waits up to 25 s) until `status` is `done`. An explore takes 30 s to a few minutes (headless
-   Chrome, at most 2 link hops). Later calls are fast. Do not start the CLI explore in parallel.
+   Chrome; it reads only the given page and lists its entry pages; explore an entry page separately when you need its tools). Later calls are fast. Do not start the CLI explore in parallel.
 6. **Share** — only when the user agrees, call `mcpit_submit`. It shares the site's structure
    (endpoints, parameters, guide), never the user's data. The registry reviews it. If your client
    cannot show a confirmation, pass `user_confirmed: true` — but only after the user said yes.

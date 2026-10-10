@@ -31,7 +31,7 @@ var version = "0.1.0-dev"
 const usage = `mcpit — make any website usable by an agent.
 
 Usage:
-  mcpit explore <url> [--depth 2] [--max-pages 15] [--no-verify]
+  mcpit explore <url> [--depth 1] [--max-pages 15] [--no-verify]
   mcpit tools <site>
   mcpit guide <site>                           llms.txt, robots, agent card and the site map
   mcpit find <site> [--task "what you want to do"]
@@ -140,7 +140,7 @@ func printJSON(v any) {
 
 func cmdExplore(ctx context.Context, a *app.App, args []string) error {
 	fs := flag.NewFlagSet("explore", flag.ContinueOnError)
-	depth := fs.Int("depth", 2, "link hops from the URL (0-2)")
+	depth := fs.Int("depth", 1, "page levels: 1 = only the URL (default), 2 = also the entry pages it links to (slow on big sites)")
 	maxPages := fs.Int("max-pages", 15, "page budget")
 	noVerify := fs.Bool("no-verify", false, "skip test calls of read tools")
 	chrome := fs.String("chrome", os.Getenv("MCPIT_CHROME"), "path to Chrome/Chromium")
@@ -153,8 +153,8 @@ func cmdExplore(ctx context.Context, a *app.App, args []string) error {
 	if err := need(pos, 1, "url"); err != nil {
 		return err
 	}
-	if *depth > 2 {
-		return errors.New("depth is at most 2")
+	if *depth < 1 || *depth > 2 {
+		return errors.New("depth is 1 or 2 (page levels)")
 	}
 	start := time.Now()
 	fmt.Fprintf(os.Stderr, "decision model: %s\n", a.Decider.Model())

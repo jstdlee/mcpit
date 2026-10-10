@@ -1,5 +1,5 @@
 // Package explore turns a website into a sitepack. It reads declared specs, then
-// visits pages up to depth 2 with a headless browser over the Chrome DevTools
+// visits the given page (and, on request, its entry pages) with a headless browser over the Chrome DevTools
 // Protocol, captures the DOM and the network log, and lets the decision model
 // sort requests, forms, parameters and effects.
 package explore
@@ -27,7 +27,7 @@ import (
 )
 
 type Options struct {
-	Depth      int // max link hops from the seed; capped at 2
+	Depth      int // page levels: 1 = the URL only (default), 2 = also the entry pages it links to
 	MaxPages   int
 	ChromePath string
 	NoBrowser  bool // declared specs and static HTML only
@@ -37,25 +37,29 @@ type Options struct {
 }
 
 type Explorer struct {
-	D         *decide.Decider
-	Opts      Options
-	ProbeText string
-	HTTP      *http.Client
-	origin    string
-	robots    *Robots // robots.txt, RFC 9309
-	robotsTxt string
-	llmsHint  string
-	examples  map[string][]string // parameter examples from the guide
-	sitemap   []string
-	feedItems []feedItem
-	altArgs   map[string][]map[string]any // more example arguments per tool id
-	patterns  []*Pattern                  // path families of the site (items or sections)
-	declTpls  []string                    // URL templates from declared specs
+	D          *decide.Decider
+	Opts       Options
+	ProbeText  string
+	HTTP       *http.Client
+	origin     string
+	robots     *Robots // robots.txt, RFC 9309
+	robotsTxt  string
+	llmsHint   string
+	examples   map[string][]string // parameter examples from the guide
+	sitemap    []string
+	feedItems  []feedItem
+	altArgs    map[string][]map[string]any // more example arguments per tool id
+	patterns   []*Pattern                  // path families of the site (items or sections)
+	declTpls   []string                    // URL templates from declared specs
+	linkPool   []string                    // level-2 entry and item links of the start page (visited or not)
+	linkText   map[string]string           // link text per URL (for link.next)
+	navPrefix  map[string]bool             // first segments linked from nav, header, footer or aside: site sections
+	cardPrefix map[string]bool             // one-segment links inside repeated cards (/owner avatars)
 }
 
 func New(d *decide.Decider, o Options) *Explorer {
-	if o.Depth < 0 || o.Depth > 2 {
-		o.Depth = 2
+	if o.Depth < 1 || o.Depth > 2 {
+		o.Depth = 1
 	}
 	if o.MaxPages <= 0 {
 		o.MaxPages = 15
@@ -105,8 +109,12 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 			all = append(all, p.URL)
 		}
 	}
-	e.patterns = e.detectPatterns(ctx, append(all, e.sitemap...))
-	for _, p := range e.patterns {
+	e.patterns = e.detectPatterns(ctx, append(append(all, e.linkPool...), e.sitemap...))
+	for i, p := range e.patterns {
+		if i == 10 {
+			e.say("  ... %d more path families", len(e.patterns)-10)
+			break
+		}
 		e.say("pattern %s: %d pages, %s", p.Template, p.Count, p.Kind)
 	}
 	for _, c := range cands {
@@ -122,18 +130,19 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 		Kind string `json:"kind"`
 	}
 	type dumpPage struct {
-		URL     string    `json:"url"`
-		Title   string    `json:"title"`
-		DOMSize int       `json:"domSize"`
-		Links   []string  `json:"links"`
-		Forms   []Form    `json:"forms"`
-		Search  []string  `json:"searchInputs"`
-		Net     []dumpReq `json:"requests"`
+		URL     string     `json:"url"`
+		Title   string     `json:"title"`
+		DOMSize int        `json:"domSize"`
+		Links   []string   `json:"links"`
+		LinkInf []LinkInfo `json:"linkInfo"`
+		Forms   []Form     `json:"forms"`
+		Search  []string   `json:"searchInputs"`
+		Net     []dumpReq  `json:"requests"`
 	}
 	var dump []dumpPage
 	for _, p := range pages {
 		kinds := e.classifyRequests(ctx, p.URL, p.Net)
-		dp := dumpPage{URL: p.URL, Title: p.Title, DOMSize: p.DOMSize, Links: p.Links, Forms: p.Forms, Search: p.Search}
+		dp := dumpPage{URL: p.URL, Title: p.Title, DOMSize: p.DOMSize, Links: p.Links, LinkInf: p.LinkInfo, Forms: p.Forms, Search: p.Search}
 		for _, n := range p.Net {
 			dp.Net = append(dp.Net, dumpReq{n, kinds[n]})
 		}
@@ -201,7 +210,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 		pack.Tools = e.verify(ctx, origin, pack.Tools)
 	}
 	pack.Fingerprint = fingerprint(pages, pack.Tools)
-	pack.Pages = buildPages(pages, e.sitemap, e.feedItems, e.patterns)
+	pack.Pages = buildPages(pages, e.linkPool, e.linkText, e.sitemap, e.feedItems, e.patterns)
 	if guide != nil {
 		for _, p := range pages {
 			if p.MetaDesc != "" && guide.Description == "" {
@@ -218,7 +227,7 @@ func (e *Explorer) Run(ctx context.Context, seed string) (*sitepack.Pack, error)
 	return pack, pack.Validate()
 }
 
-// crawl visits pages breadth-first up to Opts.Depth, one page per URL template.
+// crawl visits the URL and sorts its links; with Depth 2 it also visits the entry pages.
 func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error) {
 	cap := NewCapturer(ctx, e.Opts.ChromePath)
 	defer cap.Close()
@@ -240,71 +249,62 @@ func (e *Explorer) crawl(ctx context.Context, seed string) ([]*PageResult, error
 			return out
 		}
 	}
-	seenTpl := map[string]bool{templateOf(seed): true}
-	shapes := map[string]int{shapeOf(seed): 1}
-	sampled := map[string]bool{}
-	level := []string{seed}
 	var pages []*PageResult
 	var firstErr error
-	for depth := 0; depth <= e.Opts.Depth && len(level) > 0 && len(pages) < e.Opts.MaxPages; depth++ {
-		var next []string
-		for _, u := range level {
-			if len(pages) >= e.Opts.MaxPages || ctx.Err() != nil {
-				break
+	visit := func(level int, u, why string) *PageResult {
+		if len(pages) >= e.Opts.MaxPages || ctx.Err() != nil || !e.allowed(u) {
+			return nil
+		}
+		e.say("level %d%s: %s", level, why, u)
+		p, err := cap.Visit(ctx, u, true)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
 			}
-			if !e.allowed(u) {
-				continue
-			}
-			e.say("depth %d: %s", depth, u)
-			p, err := cap.Visit(ctx, u, true)
-			if err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				e.say("  failed: %v", err)
-				continue
-			}
-			pages = append(pages, p)
-			links := p.Links
-			if depth == 0 {
-				links = append(links, e.sitemap...) // sitemap URLs count as depth-1 links
-			}
-			for _, l := range links {
-				l = stripFragment(l)
-				tpl := templateOf(l)
-				if e.sameOrigin(l) && !seenTpl[tpl] && shapes[shapeOf(l)] < 2 && isPageURL(l) {
-					seenTpl[tpl] = true
-					shapes[shapeOf(l)]++
-					next = append(next, l)
-				}
+			e.say("  failed: %v", err)
+			return nil
+		}
+		pages = append(pages, p)
+		return p
+	}
+	// Level 1: the URL itself.
+	start := visit(1, seed, "")
+	// The links of the URL (and the sitemap) are sorted by link.kind for the site map: entry
+	// pages, item families and list pages. By default (Depth 1) none of them is opened: a big
+	// site (Hugging Face) has hundreds of entries, and each one is a separate explore.
+	// With Depth 2, entry pages are visited, then one item sample; list pages never.
+	var infos []LinkInfo
+	if start != nil {
+		infos = start.LinkInfo
+		if len(infos) == 0 {
+			for _, l := range start.Links {
+				infos = append(infos, LinkInfo{URL: l, Region: "main"})
 			}
 		}
-		// Repeating item pages (/project/{name}/): one sample per family is enough (path.pattern).
-		if len(next) > 1 {
-			pool := next
-			if depth == 0 {
-				pool = append(append([]string(nil), next...), e.sitemap...)
-			}
-			pats := e.detectPatterns(ctx, pool)
-			var kept []string
-			for _, l := range next {
-				if p := matchPattern(pats, l); p != nil && p.Kind == "items" {
-					if sampled[p.Key] {
-						continue
-					}
-					sampled[p.Key] = true
-				}
-				kept = append(kept, l)
-			}
-			if skipped := len(next) - len(kept); skipped > 0 {
-				e.say("depth %d: %d repeating item pages skipped (one sample per pattern)", depth+1, skipped)
-			}
-			next = kept
+	}
+	plan := e.planLinks(ctx, seed, infos, e.sitemap)
+	e.linkPool = append(e.linkPool, plan.Entries...)
+	e.linkPool = append(e.linkPool, plan.AllItem...)
+	e.linkText = plan.Text
+	e.say("links: %d entry pages, %d item families, %d list pages, %d sitemap URLs listed only", len(plan.Entries), len(plan.Items), len(plan.Pages), len(plan.Listed))
+	if e.Opts.Depth < 2 {
+		return pages, firstErr
+	}
+	entries := plan.Entries
+	if budget := e.Opts.MaxPages - len(pages); len(entries) > budget && budget > 0 {
+		entries = e.rankLinks(ctx, entries)[:budget]
+	}
+	for _, u := range entries {
+		visit(2, u, " entry")
+	}
+	// One item sample shows the detail page and its API (/api/products/{id}).
+	if len(plan.Items) > 0 {
+		if len(pages) < e.Opts.MaxPages {
+			visit(2, plan.Items[0], " item sample")
 		}
-		if remaining := e.Opts.MaxPages - len(pages); len(next) > remaining && remaining > 0 {
-			next = e.rankLinks(ctx, next)[:remaining]
+		if n := len(plan.Items) - 1; n > 0 {
+			e.say("level 2: %d more item families skipped", n)
 		}
-		level = next
 	}
 	return pages, firstErr
 }
@@ -477,6 +477,11 @@ func (e *Explorer) fromNetwork(ctx context.Context, entries []*NetEntry) []*cand
 		apiURLs = append(apiURLs, n.URL)
 	}
 	apiPats := e.detectPatterns(ctx, apiURLs)
+	for _, p := range apiPats {
+		if p.Count >= 3 {
+			p.Kind = "items" // the registry gate quarantines 3+ literal endpoints as one repeating family
+		}
+	}
 	groups := map[string]*candidate{}
 	var order []string
 	for _, n := range entries {
@@ -1467,6 +1472,18 @@ func (e *Explorer) templateAPIPath(u *url.URL, pats []*Pattern) (string, []pathP
 			}
 		}
 		if len(params) > 0 {
+			return strings.Join(segs, "/"), params
+		}
+	}
+	// A deeper URL under a site item family: /{owner}/{name}/funding_links.
+	if e.sameOrigin(u.String()) {
+		if p := underItems(e.patterns, u); p != nil {
+			segs := strings.Split(u.Path, "/")
+			var params []pathParam
+			for k, pos := range p.Positions {
+				params = append(params, pathParam{p.Params[k], segs[pos+1]})
+				segs[pos+1] = "{" + p.Params[k] + "}"
+			}
 			return strings.Join(segs, "/"), params
 		}
 	}

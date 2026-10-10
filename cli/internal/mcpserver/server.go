@@ -44,7 +44,7 @@ type CallIn struct {
 type ExploreIn struct {
 	Wait     bool   `json:"wait,omitempty" jsonschema:"block until the explore ends (only for clients with long tool timeouts)"`
 	URL      string `json:"url" jsonschema:"page to start from"`
-	Depth    int    `json:"depth,omitempty" jsonschema:"link hops from the URL, 0 to 2 (default 2)"`
+	Depth    int    `json:"depth,omitempty" jsonschema:"page levels: 1 = only the URL (default), 2 = also the entry pages it links to (slow on big sites)"`
 	MaxPages int    `json:"maxPages,omitempty" jsonschema:"page budget (default 15)"`
 }
 
@@ -168,7 +168,7 @@ func New(a *app.App) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in ExploreIn) (*mcp.CallToolResult, any, error) {
 			depth := in.Depth
 			if depth == 0 {
-				depth = 2
+				depth = 1
 			}
 			j, err := jb.start(in.URL, explore.Options{Depth: depth, MaxPages: in.MaxPages, Verify: true})
 			if err != nil {

@@ -122,7 +122,7 @@ func TestGuideStandards(t *testing.T) {
 	if search == nil || search.param("term").roleFact != "query" {
 		t.Fatalf("SearchAction tool missing: %+v", cands)
 	}
-	pages := buildPages(nil, sitemap, e.feedItems, nil)
+	pages := buildPages(nil, nil, nil, sitemap, e.feedItems, nil)
 	if len(pages) != 4 || pages[2].Title != "First post" || pages[2].Category != "news" {
 		t.Errorf("pages: %+v", pages)
 	}
@@ -162,7 +162,7 @@ func TestPatternsItemsAndSections(t *testing.T) {
 	if kinds["/project/{name}/"] != "items" || kinds["/manage/{name}/"] != "sections" || len(ps) != 2 {
 		t.Fatalf("patterns: %v", kinds)
 	}
-	pages := buildPages(nil, urls, nil, ps)
+	pages := buildPages(nil, nil, nil, urls, nil, ps)
 	var rows []string
 	for _, p := range pages {
 		rows = append(rows, p.Path)
@@ -191,5 +191,97 @@ func TestPatternTwoSegments(t *testing.T) {
 	ps := e.detectPatterns(context.Background(), urls)
 	if len(ps) != 1 || ps[0].Template != "/project/{name}/{version}/" || ps[0].Kind != "items" {
 		t.Fatalf("patterns: %+v", ps[0])
+	}
+}
+
+// TestPlanLinks: level 2 visits entry pages, samples one item per family and skips list pages.
+func TestPlanLinks(t *testing.T) {
+	e := New(&decide.Decider{}, Options{})
+	e.origin = "https://shop.example"
+	o := e.origin
+	infos := []LinkInfo{
+		{URL: o + "/search", Text: "Search", Region: "header"},
+		{URL: o + "/docs", Text: "Docs", Region: "nav"},
+		{URL: o + "/models", Text: "Models", Region: "nav"},
+		{URL: o + "/models?p=2", Text: "Next", Region: "main"},
+		{URL: o + "/models?sort=new", Text: "Newest", Region: "main"},
+		{URL: o + "/contact", Text: "Contact", Region: "footer"},
+	}
+	for _, n := range []string{"llama", "qwen", "mistral", "gemma", "phi"} {
+		infos = append(infos, LinkInfo{URL: o + "/m/" + n, Text: n, Region: "main", Repeat: 5})
+	}
+	for _, n := range []string{"lamp", "desk", "chair", "sofa", "rug", "bed"} {
+		infos = append(infos, LinkInfo{URL: o + "/p/" + n + "-1", Text: n, Region: "main", Repeat: 6})
+	}
+	var sitemap []string
+	for i := 0; i < 30; i++ {
+		sitemap = append(sitemap, fmt.Sprintf("%s/project/pkg%d/", o, i))
+	}
+	plan := e.planLinks(context.Background(), o+"/", infos, sitemap)
+	want := []string{o + "/search", o + "/docs", o + "/models", o + "/contact"}
+	if fmt.Sprint(plan.Entries) != fmt.Sprint(want) {
+		t.Errorf("entries %v, want %v", plan.Entries, want)
+	}
+	if len(plan.Items) != 3 { // /m/{name}, /p/{name}, /project/{name}/: one sample each
+		t.Errorf("items %v, want one sample per family (3)", plan.Items)
+	}
+	if len(plan.Pages) != 2 {
+		t.Errorf("list pages %v, want the pager and the sort link", plan.Pages)
+	}
+}
+
+// TestOwnerPatterns: /{owner}/{name} repos form one family; site sections stay apart.
+func TestOwnerPatterns(t *testing.T) {
+	e := New(&decide.Decider{}, Options{})
+	e.origin = "https://hub.example"
+	o := e.origin
+	urls := []string{o + "/docs", o + "/blog", o + "/docs/peft", o + "/docs/hub", o + "/blog/one", o + "/blog/two"}
+	for _, r := range []string{"alice/llama", "alice/qwen", "bob/phi", "carol/gemma", "dave/mistral", "erin/bert"} {
+		urls = append(urls, o+"/"+r)
+	}
+	ps := e.detectPatterns(context.Background(), urls)
+	var owner *Pattern
+	for _, p := range ps {
+		if p.AnyPrefix {
+			owner = p
+		}
+	}
+	if owner == nil || owner.Template != "/{owner}/{name}" || owner.Count != 6 {
+		t.Fatalf("owner family missing: %+v", ps)
+	}
+	if m := matchPattern(ps, o+"/frank/new-model"); m != owner {
+		t.Errorf("a new owner path should match the owner family, got %+v", m)
+	}
+	if m := matchPattern(ps, o+"/docs/zzz"); m == owner {
+		t.Error("/docs/zzz is a docs section, not an owner repo")
+	}
+}
+
+// TestFilterVariantAndOwnerAPI: a query variant of the start page is a list page; an API URL
+// under an owner family is templated.
+func TestFilterVariantAndOwnerAPI(t *testing.T) {
+	e := New(&decide.Decider{}, Options{})
+	e.origin = "https://hub.example"
+	o := e.origin
+	infos := []LinkInfo{
+		{URL: o + "/models?pipeline_tag=text-generation", Text: "Text generation", Region: "main"},
+		{URL: o + "/docs", Text: "Docs", Region: "nav"},
+	}
+	for _, r := range []string{"alice/llama", "bob/phi", "carol/gemma", "dave/mistral", "erin/bert"} {
+		infos = append(infos, LinkInfo{URL: o + "/" + r, Region: "main", Repeat: 5})
+		infos = append(infos, LinkInfo{URL: o + "/" + strings.Split(r, "/")[0], Region: "main", Repeat: 5})
+	}
+	plan := e.planLinks(context.Background(), o+"/models", infos, nil)
+	if plan.Kind[o+"/models?pipeline_tag=text-generation"] != "page" {
+		t.Errorf("filter variant: %q, want page", plan.Kind[o+"/models?pipeline_tag=text-generation"])
+	}
+	var urls []string
+	for _, i := range infos {
+		urls = append(urls, i.URL)
+	}
+	e.patterns = e.detectPatterns(context.Background(), urls)
+	u, _ := url.Parse(o + "/alice/llama/funding_links")
+	if p, params := e.templateAPIPath(u, nil); p != "/{owner}/{name}/funding_links" || len(params) != 2 {
+		t.Errorf("owner API template: %s %v", p, params)
 	}
 }

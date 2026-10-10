@@ -2,7 +2,7 @@
 
 Make any website usable by an agent as an MCP server, with no change to the site.
 
-- The first visit to a site is slow: mcpit explores it (at most 2 link hops) and saves a **sitepack** — its search, forms and APIs as tools. A sitepack holds structure only, never cookies, tokens, typed values or page content.
+- The first visit to a site is slow: mcpit explores the given page (its links become a site map of entry pages) and saves a **sitepack** — its search, forms and APIs as tools. A sitepack holds structure only, never cookies, tokens, typed values or page content.
 - Later calls use the sitepack directly and are fast.
 - A shared **registry** controls versions, checks every submit, and serves signed sitepacks, so other users skip the slow first visit.
 - Every decision in mcpit is made by a decision model (Clef-flash on Workers AI, or local jev) through typed decision points, not by LLM reasoning.

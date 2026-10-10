@@ -52,7 +52,7 @@ mcpit tools www.gutenberg.org
 mcpit call www.gutenberg.org search --args '{"query":"moby dick"}'
 ```
 
-Explore a new site once (slow; at most 2 link hops; it reads robots.txt, sitemaps, feeds, llms.txt and agent files, then drives a headless browser):
+Explore a new site once (it opens only the given page and lists its entry pages and item families in the site map; `--depth 2` also opens the entry pages, which is slow on big sites; it reads robots.txt, sitemaps, feeds, llms.txt and agent files, then drives a headless browser):
 
 ```bash
 mcpit explore https://www.example.com/

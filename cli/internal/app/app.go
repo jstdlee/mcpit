@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -130,10 +131,11 @@ func (a *App) Explore(ctx context.Context, url string, o explore.Options) (*site
 	if err != nil {
 		return p, err
 	}
-	// Keep a pulled registry version's tools that exploration did not find again.
-	if old, err := a.Store.Load(p.Origin); err == nil {
+	// Keep a pulled registry version's tools that exploration did not find again. Tools of an
+	// earlier local explore are replaced, and literal tools a new template covers are dropped.
+	if old, err := a.Store.Load(p.Origin); err == nil && old.Registry != nil && old.Registry.Signature != "" {
 		for _, t := range old.Tools {
-			if p.Tool(t.ID) == nil {
+			if p.Tool(t.ID) == nil && coveredBy(t, p.Tools) == "" {
 				p.Tools = append(p.Tools, t)
 			}
 		}
@@ -266,4 +268,27 @@ func (a *App) EnsureKey(ctx context.Context) error {
 		return fmt.Errorf("device key %s is %s: a moderator must approve it", k.ID, st.State)
 	}
 	return nil
+}
+
+var tplParam = regexp.MustCompile(`\{\{[^}]+\}\}`)
+
+// coveredBy returns the id of a template tool whose URL matches the literal tool's URL
+// (the same rule as the registry gate).
+func coveredBy(t sitepack.Tool, tools []sitepack.Tool) string {
+	if tplParam.MatchString(t.Request.URL) {
+		return ""
+	}
+	for _, o := range tools {
+		if o.ID == t.ID || o.Request.Method != t.Request.Method || !tplParam.MatchString(o.Request.URL) {
+			continue
+		}
+		parts := tplParam.Split(o.Request.URL, -1)
+		for i := range parts {
+			parts[i] = regexp.QuoteMeta(parts[i])
+		}
+		if regexp.MustCompile("^" + strings.Join(parts, "[^/]+") + "$").MatchString(t.Request.URL) {
+			return o.ID
+		}
+	}
+	return ""
 }

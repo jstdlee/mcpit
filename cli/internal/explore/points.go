@@ -312,8 +312,8 @@ func (e *Explorer) rankLinks(ctx context.Context, links []string) []string {
 	ls := map[string]any{}
 	for i, l := range links {
 		id := fmt.Sprintf("l%d", i)
-		ls[id] = l
-		qs[id] = decide.Question{Type: "score", Instructions: "How likely is it that link " + id + " opens a page with search, filters, lists of items or forms?",
+		ls[id] = map[string]any{"url": l, "text": e.linkText[l]}
+		qs[id] = decide.Question{Type: "score", Instructions: "How likely is it that link " + id + " opens a main page of the site with search, forms, tools, an API or documentation?",
 			Criteria: []string{"Very unlikely", "Unlikely", "Likely", "Very likely"}}
 		subj[id] = l
 	}
@@ -348,9 +348,10 @@ func ruleRankLinks(links []string) []string {
 		if u != nil && u.RawQuery != "" {
 			s += 2
 		}
-		if regexp.MustCompile(`search|list|categor|product|catalog|browse|shop|find|item`).MatchString(strings.ToLower(l)) {
+		if regexp.MustCompile(`search|find|docs|api|developer|tool|contact|categor|catalog|browse|shop|product`).MatchString(strings.ToLower(l)) {
 			s += 3
 		}
+		s -= strings.Count(strings.Trim(u.Path, "/"), "/") // shallow pages are entries
 		return s
 	}
 	out := append([]string(nil), links...)

@@ -80,6 +80,7 @@ type PageResult struct {
 	MetaDesc string
 	LLMsLink string
 	Links    []string
+	LinkInfo []LinkInfo // the same links with their text, page region and repeat count
 	Forms    []Form
 	Inputs   []Input
 	Buttons  []Button
@@ -88,6 +89,17 @@ type PageResult struct {
 	Search   []string // selectors of inputs that were typed into
 	Clicked  []string // labels of buttons that were clicked
 	DOMSize  int
+}
+
+// LinkInfo is one link with the structure around it. Region is nav, header, footer, aside
+// or main. Repeat counts the sibling cards of the same shape around the link (0 = none):
+// product grids and model lists repeat, a single "Docs" link does not.
+type LinkInfo struct {
+	URL    string `json:"href"`
+	Text   string `json:"text"`
+	Region string `json:"region"`
+	Repeat int    `json:"repeat"`
+	Group  int    `json:"group,omitempty"` // repeated sibling group on the page (1-based; 0 = none)
 }
 
 // ButtonPicker returns the selectors of buttons that are safe and useful to click
@@ -173,27 +185,69 @@ const domJS = `(() => {
       type: (el.getAttribute('type') || '').toLowerCase(), role: el.getAttribute('role') || ''}));
   document.documentElement.setAttribute('data-mcpit-n', String(n));
   const links = [...document.querySelectorAll('a[href]')].map(a => a.href).filter(h => /^https?:/.test(h));
+  const sig = el => el.tagName + '.' + [...el.classList].filter(c => !/\d/.test(c)).sort().join('.');
+  const groups = new Map();
+  const repeatOf = a => {
+    let el = a;
+    for (let i = 0; i < 5 && el.parentElement && el.parentElement !== document.body; i++) {
+      const s = sig(el);
+      const same = [...el.parentElement.children].filter(c => sig(c) === s && (c.matches('a[href]') || c.querySelector('a[href]'))).length;
+      if (same >= 4) {
+        // The group is a structure, not one element: the avatar lists of 13 repo cards are one group.
+        const gk = sig(el.parentElement) + '>' + s;
+        if (!groups.has(gk)) groups.set(gk, []);
+        const cards = groups.get(gk);
+        if (!cards.includes(el)) cards.push(el);
+        return [same, cards.indexOf(el) + 1, [...groups.keys()].indexOf(gk) + 1];
+      }
+      el = el.parentElement;
+    }
+    return [0, 0, 0];
+  };
+  const regionOf = a => {
+    const r = a.closest('nav,header,footer,aside,[role=navigation],[role=banner],[role=contentinfo],[role=complementary]');
+    if (!r) return 'main';
+    const role = r.getAttribute('role');
+    return ({navigation: 'nav', banner: 'header', contentinfo: 'footer', complementary: 'aside'})[role] || r.tagName.toLowerCase();
+  };
+  const seenLink = new Set();
+  const perPath = {};
+  const linkInfo = [];
+  for (const a of document.querySelectorAll('a[href]')) {
+    if (!/^https?:/.test(a.href) || seenLink.has(a.href) || linkInfo.length >= 400) continue;
+    seenLink.add(a.href);
+    // Filter menus (184 language variants of one list) must not fill the limit: 3 query variants per path.
+    const pk = a.host + a.pathname;
+    perPath[pk] = (perPath[pk] || 0) + 1;
+    if (a.search && perPath[pk] > 3) continue;
+    // A long menu or grid (846 languages) must not hide the rest of the page: links of the first 12 cards per group.
+    const [repeat, nth, group] = repeatOf(a);
+    if (nth > 12) continue;
+    linkInfo.push({href: a.href, text: (a.innerText || a.getAttribute('aria-label') || a.title || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+      region: regionOf(a), repeat, group});
+  }
   const scripts = [...document.scripts].map(s => s.src).filter(Boolean);
   const h = document.querySelector('h1') || document.querySelector('h2');
   const meta = document.querySelector('meta[name="description"]');
   const llms = document.querySelector('link[rel="llms"]');
   return {title: document.title, text: (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').trim().slice(0, 600), heading: h ? h.innerText.trim().slice(0, 120) : '', metaDesc: meta ? (meta.content || '').slice(0, 300) : '',
-    llms: llms ? llms.href : '', forms, inputs, buttons, links: [...new Set(links)].slice(0, 400), scripts,
+    llms: llms ? llms.href : '', forms, inputs, buttons, links: [...new Set(links)].slice(0, 400), linkInfo, scripts,
     domSize: document.getElementsByTagName('*').length};
 })()`
 
 type domResult struct {
-	Title    string   `json:"title"`
-	Text     string   `json:"text"`
-	Heading  string   `json:"heading"`
-	MetaDesc string   `json:"metaDesc"`
-	LLMs     string   `json:"llms"`
-	Forms    []Form   `json:"forms"`
-	Inputs   []Input  `json:"inputs"`
-	Buttons  []Button `json:"buttons"`
-	Links    []string `json:"links"`
-	Scripts  []string `json:"scripts"`
-	DOMSize  int      `json:"domSize"`
+	Title    string     `json:"title"`
+	Text     string     `json:"text"`
+	Heading  string     `json:"heading"`
+	MetaDesc string     `json:"metaDesc"`
+	LLMs     string     `json:"llms"`
+	Forms    []Form     `json:"forms"`
+	Inputs   []Input    `json:"inputs"`
+	Buttons  []Button   `json:"buttons"`
+	Links    []string   `json:"links"`
+	LinkInfo []LinkInfo `json:"linkInfo"`
+	Scripts  []string   `json:"scripts"`
+	DOMSize  int        `json:"domSize"`
 }
 
 // setValueJS types a value the way frameworks expect (native setter + input event).
@@ -303,7 +357,7 @@ func (c *Capturer) Visit(parent context.Context, pageURL string, act bool) (*Pag
 		return nil, err
 	}
 	res := &PageResult{URL: pageURL, Title: dom.Title, Text: dom.Text, Heading: dom.Heading, MetaDesc: dom.MetaDesc, LLMsLink: dom.LLMs,
-		Links: dom.Links, Scripts: dom.Scripts, DOMSize: dom.DOMSize, Inputs: dom.Inputs, Buttons: dom.Buttons}
+		Links: dom.Links, LinkInfo: dom.LinkInfo, Scripts: dom.Scripts, DOMSize: dom.DOMSize, Inputs: dom.Inputs, Buttons: dom.Buttons}
 	for _, f := range dom.Forms {
 		f.Page = pageURL
 		res.Forms = append(res.Forms, f)

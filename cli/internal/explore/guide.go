@@ -351,7 +351,9 @@ func firstFloat(lists ...[]string) *float64 {
 
 // buildPages makes the site map: crawled pages with their heading or title, then
 // sitemap URLs. The category is the first path segment.
-func buildPages(pages []*PageResult, sitemap []string, feed []feedItem, pats []*Pattern) []sitepack.Page {
+// links are the start page's entry and item links that were not all visited; their link
+// text is the title.
+func buildPages(pages []*PageResult, links []string, linkText map[string]string, sitemap []string, feed []feedItem, pats []*Pattern) []sitepack.Page {
 	// On single-page apps every page shares one <title>; such a title says nothing.
 	count := map[string]int{}
 	for _, p := range pages {
@@ -376,6 +378,9 @@ func buildPages(pages []*PageResult, sitemap []string, feed []feedItem, pats []*
 				return
 			}
 			seen[u.Path] = true
+			if len(out) >= 500 {
+				return
+			}
 			patRow[p.Key] = len(out)
 			out = append(out, sitepack.Page{Path: p.Template, Category: p.Prefix, Source: source, Pattern: true, Count: p.Count,
 				Title: fmt.Sprintf("%s pages (%d items)", strings.ToUpper(p.Prefix[:1])+p.Prefix[1:], p.Count), Examples: []string{u.Path}})
@@ -418,6 +423,9 @@ func buildPages(pages []*PageResult, sitemap []string, feed []feedItem, pats []*
 			}
 		}
 		add(p.URL, title, "crawl")
+	}
+	for _, l := range links {
+		add(l, linkText[l], "link")
 	}
 	for _, s := range sitemap {
 		add(s, "", "sitemap")
@@ -649,104 +657,64 @@ func attr(n *html.Node, k string) string {
 // /project/requests/ …) into read tools: GET /project/{name}/ returns the page text.
 // Members come from crawled pages and sitemap URLs.
 func (e *Explorer) fromPageShapes(pages []*PageResult, sitemap []string) []*candidate {
-	type member struct {
-		segs  []string
-		path  string
-		title string
-		slash bool
-	}
-	groups := map[string][]member{}
-	seen := map[string]bool{}
-	add := func(raw, title string) {
-		u, err := url.Parse(raw)
-		if err != nil || u.RawQuery != "" || !e.sameOrigin(raw) || !isPageURL(raw) || seen[u.Path] {
-			return
-		}
-		segs := strings.Split(strings.Trim(u.Path, "/"), "/")
-		if len(segs) < 2 || segs[0] == "" {
-			return
-		}
-		seen[u.Path] = true
-		slash := strings.HasSuffix(u.Path, "/")
-		key := fmt.Sprintf("%s/%d/%t", segs[0], len(segs), slash)
-		groups[key] = append(groups[key], member{segs, u.Path, title, slash})
-	}
+	_ = sitemap // the patterns already hold the sitemap members
+	title := map[string]string{}
+	blocked := map[string]bool{}
 	for _, p := range pages {
-		if p.Blocked {
-			if u, err := url.Parse(p.URL); err == nil {
-				seen[u.Path] = true // never use a page that answered with a browser check
-			}
-			continue
-		}
-		add(p.URL, p.Title)
-	}
-	for _, s := range sitemap {
-		add(s, "")
-	}
-	keys := make([]string, 0, len(groups))
-	for k, g := range groups {
-		if len(g) >= 2 {
-			keys = append(keys, k)
+		if u, err := url.Parse(p.URL); err == nil {
+			title[u.Path] = p.Title
+			blocked[u.Path] = p.Blocked // never use a page that answered with a browser check
 		}
 	}
-	sort.Slice(keys, func(i, j int) bool { return len(groups[keys[i]]) > len(groups[keys[j]]) })
 	var out []*candidate
-	for _, k := range keys {
+	for _, pt := range e.patterns { // sorted by size
 		if len(out) >= 6 {
 			break
 		}
-		if p := patternByKey(e.patterns, k); p == nil || p.Kind != "items" {
+		if pt.Kind != "items" {
 			continue // sections (/manage/account, /manage/organizations) are not one tool
 		}
-		g := groups[k]
-		first := g[0]
-		var vary []int
-		for i := 1; i < len(first.segs); i++ {
-			for _, m := range g[1:] {
-				if m.segs[i] != first.segs[i] {
-					vary = append(vary, i)
-					break
-				}
+		var members []string
+		for _, m := range pt.Members {
+			if !blocked[m] && e.sameOrigin(e.origin+m) {
+				members = append(members, m)
 			}
 		}
-		if len(vary) == 0 || len(vary) > 2 {
+		if len(members) < 2 {
 			continue
 		}
-		tpl := append([]string(nil), first.segs...)
-		c := &candidate{source: "page", observed: len(g), effectFact: "read"}
-		var names []string
-		for n, i := range vary {
-			vals := []string{}
-			for _, m := range g {
-				vals = appendUnique(vals, m.segs[i])
+		first := members[0]
+		c := &candidate{source: "page", observed: len(members), effectFact: "read"}
+		tpl := pt.Template
+		for n, pos := range pt.Positions {
+			name := pt.Params[n]
+			var vals []string
+			for _, m := range members {
+				if segs := strings.Split(strings.Trim(m, "/"), "/"); pos < len(segs) {
+					vals = appendUnique(vals, segs[pos])
+				}
 			}
-			name := "name"
-			if allNumeric(vals) {
-				name = "id"
-			}
-			if n > 0 {
-				name += "2"
-			}
-			names = append(names, name)
-			tpl[i] = "{{" + name + "}}"
+			tpl = strings.Replace(tpl, "{"+name+"}", "{{"+name+"}}", 1)
 			p := c.param(name)
 			if len(vals) > 4 {
 				vals = vals[:4]
 			}
 			p.in, p.roleFact, p.required, p.values = "path", "id", true, vals
 		}
-		path := "/" + strings.Join(tpl, "/")
-		if first.slash {
-			path += "/"
+		desc := fmt.Sprintf("Read a %s page by %s (example: %s", pt.Prefix, strings.Join(pt.Params, " and "), first)
+		if pt.AnyPrefix {
+			desc = fmt.Sprintf("Read a page by %s (example: %s", strings.Join(pt.Params, " and "), first)
 		}
-		example := first.path
-		desc := fmt.Sprintf("Read a %s page by %s (example: %s", first.segs[0], strings.Join(names, " and "), example)
-		if first.title != "" {
-			desc += "; title: " + clip(first.title, 60)
+		if t := title[first]; t != "" {
+			desc += "; title: " + clip(t, 60)
 		}
 		desc += "); returns the page text."
-		c.tool = sitepack.Tool{ID: safeID(first.segs[0] + "_page"), Kind: "read", Auth: "none", Executors: []string{"http"},
-			Description: clip(desc, 300), Request: sitepack.Request{Method: "GET", URL: e.origin + path}, Output: sitepack.Output{Type: "html"}}
+		id := pt.Prefix + "_page"
+		if pt.AnyPrefix {
+			id = "item_page"
+		}
+		c.tool = sitepack.Tool{ID: safeID(id), Kind: "read", Auth: "none", Executors: []string{"http"},
+			Description: clip(desc, 300), Request: sitepack.Request{Method: "GET", URL: e.origin + tpl}, Output: sitepack.Output{Type: "html"}}
 		out = append(out, c)
 	}
 	return out

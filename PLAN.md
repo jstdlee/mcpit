@@ -557,6 +557,16 @@ sgbus result: 7 tools found (geocode, nearest, search, busstops, arrivals, OCR, 
 - **Gate (facts, before the model):** a new literal tool that a template tool covers (`/api/products/981` vs `/api/products/{{id}}`) → reject; a live or changed one → retire. For id-like parameters the literal value must hold a digit (`/products/search` is not covered). Three or more literal tools that differ in one path segment, with no template → quarantine as one repeating family.
 - **Batch review (`GET/POST /v1/admin/review/{origin}`, console Quarantine tab):** all waiting items of a site in one view. Checklist per item: path, scan, duplicate, repeating, effect, login, test call (replay + `resp.data`). Clef-flash per tool (focused state): useful, desc, effect, approve, injection → suggestion approve / review / reject. Site checks: status, live tools, repeating families, write tools. The moderator presets from the suggestions, changes what they want, and applies once: one new version, one audit row (`quarantine.batch`).
 
+### 11.7 Two page levels and entry-page planning (2026-10-10)
+
+- **Single page by default.** `explore` opens only the given URL (before: three page levels). Its links are sorted (below) into the site map, not opened: on a big site (Hugging Face) every entry page is its own explore. `--depth 2` also opens the entry pages and one item sample.
+- **Link structure (capture):** every link carries its text, its region (header, nav, main, aside, footer) and the number of same-shape sibling cards around it (`repeat`): product grids and model lists repeat, a "Docs" link does not.
+- **Decision point `link.kind`** (Clef-flash, 12 links per call, first 60 links): `entry` (section, search, docs, tools, account, contact), `item` (one product, model, package, post) or `page` (pagination, sort, filter). Facts first: members of an item family (`path.pattern`) are items; a query variant of a listed path (`/models?pipeline_tag=…`) is a list page; sitemap URLs past the limit are only listed. Rule fallback: pager → page; main + repeat ≥ 4 → item; else entry.
+- **Visit plan (`--depth 2` only):** entry pages (header and nav first, `link.next` ranks them when the budget is short), then at most one item sample (it shows the detail page and its API); list pages are never visited. `/index.html` is the same page as `/`.
+- **Owner families:** `/{owner}/{name}` (GitHub, Hugging Face) forms one family when 4+ first segments are not site sections (sections = linked from nav/header/footer/aside, or one-segment pages not only linked from repeated cards). Deeper API URLs under a family are templated (`/{owner}/{name}/funding_links`).
+- **Facts on families:** 50+ pages → items; 3+ literal API URLs that differ in one segment → one template (the registry gate would quarantine them).
+- Real sites: see the commit message and §11.7 results below.
+
 ## 12. Next step
 
 1. Tune the explorer on real sites (§11.2).
